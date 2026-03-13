@@ -45,7 +45,7 @@ function safeSetItem(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // localStorage not available (e.g. Telegram WebView)
+    // localStorage not available
   }
 }
 
@@ -64,17 +64,13 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function getUserId(): string {
-  // Try Telegram user ID first
   const tg = getTelegramWebApp();
   try {
     const tgUser = tg?.initDataUnsafe?.user;
-    if (tgUser && tgUser.id) {
-      return String(tgUser.id);
-    }
+    if (tgUser && tgUser.id) return String(tgUser.id);
   } catch {
     // ignore
   }
-  // Fallback for testing outside Telegram
   let id = safeGetItem("wine_user_id");
   if (!id) {
     id = "user_" + Math.random().toString(36).slice(2, 10);
@@ -104,10 +100,15 @@ export default function Home() {
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [cellarLoading, setCellarLoading] = useState(false);
 
-  // Three separate refs for different capture modes
-  const cameraInputRef = useRef<HTMLInputElement>(null);
+  // Camera state
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  // Gallery file input ref
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const plainInputRef = useRef<HTMLInputElement>(null);
 
   // Notify Telegram that the Mini App is ready
   useEffect(() => {
@@ -118,77 +119,97 @@ export default function Home() {
         tg.expand();
       }
     } catch {
-      // not inside Telegram, that's fine
+      // not inside Telegram
     }
   }, []);
 
-  // ── Cellar fetch ─────────────────────────────────────────
-  const fetchCellar = useCallback(async () => {
-    setCellarLoading(true);
-    try {
-      const uid = getUserId();
-      const res = await fetch(`${API_BASE}/api/cellar/${uid}`);
-      const data = await res.json();
-      setCellar(data.wines || []);
-    } catch {
-      setCellar([]);
-    } finally {
-      setCellarLoading(false);
-    }
+  // Clean up camera stream when leaving scan view
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
   }, []);
 
-  // ── Save to cellar ──────────────────────────────────────
-  const saveWine = async (wine: WineData): Promise<boolean> => {
+  // ── Camera functions ────────────────────────────────────────
+  const startCamera = async () => {
+    setCameraError(null);
+    setCameraActive(true);
+
     try {
-      const uid = getUserId();
-      const res = await fetch(`${API_BASE}/api/cellar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: uid, wine }),
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
       });
-      const data = await res.json();
-      return data.success === true;
-    } catch {
-      return false;
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg.includes("NotAllowedError") || msg.includes("Permission")) {
+        setCameraError(
+          "Camera permission denied. Please allow camera access in your browser/Telegram settings and try again."
+        );
+      } else if (msg.includes("NotFoundError")) {
+        setCameraError(
+          "No camera found on this device."
+        );
+      } else {
+        setCameraError(
+          `Could not access camera: ${msg}. Try using "Upload from Gallery" instead.`
+        );
+      }
+      setCameraActive(false);
     }
   };
 
-  // ── Delete from cellar ──────────────────────────────────
-  const deleteWine = async (wineId: string) => {
-    try {
-      const uid = getUserId();
-      await fetch(`${API_BASE}/api/cellar/${uid}/${wineId}`, {
-        method: "DELETE",
-      });
-      setCellar((prev) => prev.filter((w) => w.id !== wineId));
-    } catch {
-      // silently fail
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
   };
 
-  // ── Scan handler ─────────────────────────────────────────
-  const handleFileSelected = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const snapPhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
 
-    setView("scan");
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Stop camera immediately after capture
+    stopCamera();
+
+    // Get base64 image
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    setPreviewUrl(dataUrl);
+
+    // Send to scan API
+    sendImageToScan(dataUrl);
+  };
+
+  // ── Scan from base64 ───────────────────────────────────────
+  const sendImageToScan = async (base64: string) => {
     setLoading(true);
     setErrorMsg(null);
     setScanResult(null);
     setSaved(false);
 
-    let preview = "";
     try {
-      preview = URL.createObjectURL(file);
-      setPreviewUrl(preview);
-    } catch {
-      setPreviewUrl(null);
-    }
-
-    try {
-      const base64 = await fileToBase64(file);
       const res = await fetch(`${API_BASE}/api/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -209,7 +230,89 @@ export default function Home() {
     }
   };
 
-  // ── Manual lookup handler ────────────────────────────────
+  // ── File upload handler (gallery) ──────────────────────────
+  const handleFileSelected = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    stopCamera();
+    setLoading(true);
+    setErrorMsg(null);
+    setScanResult(null);
+    setSaved(false);
+
+    try {
+      const preview = URL.createObjectURL(file);
+      setPreviewUrl(preview);
+    } catch {
+      setPreviewUrl(null);
+    }
+
+    try {
+      const base64 = await fileToBase64(file);
+      await sendImageToScan(base64);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setErrorMsg(`Failed to read file: ${message}`);
+      setLoading(false);
+    }
+  };
+
+  // ── Gallery opener ─────────────────────────────────────────
+  const openGallery = () => {
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = "";
+      galleryInputRef.current.click();
+    }
+  };
+
+  // ── Cellar fetch ────────────────────────────────────────────
+  const fetchCellar = useCallback(async () => {
+    setCellarLoading(true);
+    try {
+      const uid = getUserId();
+      const res = await fetch(`${API_BASE}/api/cellar/${uid}`);
+      const data = await res.json();
+      setCellar(data.wines || []);
+    } catch {
+      setCellar([]);
+    } finally {
+      setCellarLoading(false);
+    }
+  }, []);
+
+  // ── Save to cellar ─────────────────────────────────────────
+  const saveWine = async (wine: WineData): Promise<boolean> => {
+    try {
+      const uid = getUserId();
+      const res = await fetch(`${API_BASE}/api/cellar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: uid, wine }),
+      });
+      const data = await res.json();
+      return data.success === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // ── Delete from cellar ─────────────────────────────────────
+  const deleteWine = async (wineId: string) => {
+    try {
+      const uid = getUserId();
+      await fetch(`${API_BASE}/api/cellar/${uid}/${wineId}`, {
+        method: "DELETE",
+      });
+      setCellar((prev) => prev.filter((w) => w.id !== wineId));
+    } catch {
+      // silently fail
+    }
+  };
+
+  // ── Manual lookup handler ──────────────────────────────────
   const handleLookup = async () => {
     if (!wineName.trim()) return;
     setLoading(true);
@@ -241,50 +344,18 @@ export default function Home() {
     }
   };
 
-  // ── Camera / Gallery openers ─────────────────────────────
-  // Camera: uses capture="environment" (works on iOS + older Android)
-  // If that fails (Android 14/15 + Telegram WebView), falls back to
-  // a plain <input type="file"> which shows camera in the chooser.
-  const openCamera = () => {
-    // Try the capture input first; on Android 14/15 in Telegram
-    // WebView this may still open photos, so we also have the
-    // plain input as a fallback the user can try.
-    if (cameraInputRef.current) {
-      cameraInputRef.current.value = "";
-      cameraInputRef.current.click();
-    }
-  };
-
-  // "Choose Photo" — uses the android/allowCamera trick to show
-  // both Camera and Gallery options on Android 14/15 Chrome.
-  const openGallery = () => {
-    if (galleryInputRef.current) {
-      galleryInputRef.current.value = "";
-      galleryInputRef.current.click();
-    }
-  };
-
-  // Plain file input — no accept filter, guaranteed to show camera
-  // option on all Android versions as a last resort.
-  const openPlainPicker = () => {
-    if (plainInputRef.current) {
-      plainInputRef.current.value = "";
-      plainInputRef.current.click();
-    }
-  };
-
   const resetScan = () => {
+    stopCamera();
     setScanResult(null);
     setErrorMsg(null);
     setPreviewUrl(null);
     setLoading(false);
     setSaved(false);
-    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    setCameraError(null);
     if (galleryInputRef.current) galleryInputRef.current.value = "";
-    if (plainInputRef.current) plainInputRef.current.value = "";
   };
 
-  // ── Styles ───────────────────────────────────────────────
+  // ── Styles ──────────────────────────────────────────────────
   const s = {
     container: {
       maxWidth: 420,
@@ -294,7 +365,8 @@ export default function Home() {
       background:
         "linear-gradient(160deg, #1a0a2e 0%, #2d1b4e 50%, #4a1942 100%)",
       color: "#f5f0eb",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      fontFamily:
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     } as React.CSSProperties,
     header: { textAlign: "center" as const, marginBottom: 32 },
     title: { fontSize: 26, fontWeight: 700, margin: "0 0 4px" },
@@ -393,42 +465,18 @@ export default function Home() {
     },
   };
 
-  // ── Hidden file inputs ───────────────────────────────────
-  // 1. Camera input: capture="environment" — opens camera on iOS
-  //    and older Android. On Android 14/15 Telegram WebView it may
-  //    still open the photo picker (known platform bug).
-  // 2. Gallery input: uses "image/*,android/allowCamera" trick —
-  //    on Android 14/15 Chrome this restores the Camera option in
-  //    the chooser dialog alongside the gallery.
-  // 3. Plain input: no accept filter at all — guaranteed to show
-  //    camera option on every Android version as a last resort.
+  // ── Hidden gallery input ────────────────────────────────────
   const hiddenInputs = (
-    <>
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={handleFileSelected}
-      />
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*,android/allowCamera"
-        style={{ display: "none" }}
-        onChange={handleFileSelected}
-      />
-      <input
-        ref={plainInputRef}
-        type="file"
-        style={{ display: "none" }}
-        onChange={handleFileSelected}
-      />
-    </>
+    <input
+      ref={galleryInputRef}
+      type="file"
+      accept="image/*"
+      style={{ display: "none" }}
+      onChange={handleFileSelected}
+    />
   );
 
-  // ── Wine Result Card (reused in scan + lookup) ───────────
+  // ── Wine Result Card (reused in scan + lookup) ──────────────
   const WineCard = ({
     wine,
     onSave,
@@ -485,16 +533,19 @@ export default function Home() {
         onClick={onSave}
         disabled={isSaved}
       >
-        {isSaved ? "\u2713 Saved to Cellar" : "\uD83C\uDF77 Save to My Cellar"}
+        {isSaved ? "Saved to Cellar" : "Save to My Cellar"}
       </button>
     </>
   );
 
-  // ── SCAN VIEW ────────────────────────────────────────────
+  // ── SCAN VIEW ───────────────────────────────────────────────
   if (view === "scan") {
     return (
       <div style={s.container}>
         {hiddenInputs}
+        {/* Hidden canvas for capturing snapshots */}
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+
         <button
           style={s.back}
           onClick={() => {
@@ -506,10 +557,101 @@ export default function Home() {
         </button>
         <h2>Scan Bottle</h2>
 
-        {previewUrl && (
+        {/* Live camera viewfinder */}
+        {cameraActive && (
+          <div style={{ position: "relative", marginBottom: 16 }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                width: "100%",
+                borderRadius: 12,
+                background: "#000",
+                maxHeight: 350,
+                objectFit: "cover",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                display: "flex",
+                justifyContent: "center",
+                padding: "16px 0",
+                background:
+                  "linear-gradient(transparent, rgba(0,0,0,0.7))",
+                borderRadius: "0 0 12px 12px",
+              }}
+            >
+              <button
+                onClick={snapPhoto}
+                style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: "50%",
+                  border: "4px solid #fff",
+                  background: "rgba(124,58,237,0.8)",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 12px rgba(0,0,0,0.4)",
+                }}
+                title="Capture"
+              />
+            </div>
+            <button
+              onClick={stopCamera}
+              style={{
+                position: "absolute",
+                top: 8,
+                right: 8,
+                background: "rgba(0,0,0,0.6)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Camera error message */}
+        {cameraError && (
+          <div
+            style={{
+              ...s.card,
+              borderColor: "rgba(248,113,113,0.3)",
+              border: "1px solid rgba(248,113,113,0.3)",
+            }}
+          >
+            <p style={{ margin: 0, color: "#f87171", fontSize: 14 }}>
+              {cameraError}
+            </p>
+            <p
+              style={{
+                margin: "8px 0 0",
+                opacity: 0.7,
+                fontSize: 13,
+              }}
+            >
+              You can still use &quot;Upload from Gallery&quot; below to
+              select a photo of the wine label.
+            </p>
+          </div>
+        )}
+
+        {/* Preview of captured/uploaded image */}
+        {previewUrl && !cameraActive && (
           <img src={previewUrl} alt="Wine label" style={s.preview} />
         )}
 
+        {/* Loading state */}
         {loading && (
           <div style={s.card}>
             <p style={{ margin: 0, textAlign: "center" }}>
@@ -528,20 +670,17 @@ export default function Home() {
           </div>
         )}
 
+        {/* Error state */}
         {errorMsg && (
           <div style={s.card}>
             <p style={{ margin: 0, color: "#f87171" }}>{errorMsg}</p>
-            <button
-              style={s.actionBtn("#7c3aed")}
-              onClick={() => {
-                resetScan();
-              }}
-            >
+            <button style={s.actionBtn("#7c3aed")} onClick={resetScan}>
               Try Again
             </button>
           </div>
         )}
 
+        {/* Scan result */}
         {scanResult && (
           <>
             <WineCard
@@ -552,18 +691,14 @@ export default function Home() {
                 if (ok) setSaved(true);
               }}
             />
-            <button
-              style={s.actionBtn("#7c3aed")}
-              onClick={() => {
-                resetScan();
-              }}
-            >
+            <button style={s.actionBtn("#7c3aed")} onClick={resetScan}>
               Scan Another Bottle
             </button>
           </>
         )}
 
-        {!loading && !scanResult && !errorMsg && (
+        {/* Initial state — show camera + gallery buttons */}
+        {!loading && !scanResult && !errorMsg && !cameraActive && (
           <div style={s.card}>
             <p
               style={{
@@ -579,21 +714,12 @@ export default function Home() {
                 ...s.actionBtn("#7c3aed"),
                 marginBottom: 8,
               }}
-              onClick={openCamera}
+              onClick={startCamera}
             >
-              Take Photo (iOS)
+              Open Camera
             </button>
-            <button
-              style={{
-                ...s.actionBtn("#6d28d9"),
-                marginBottom: 8,
-              }}
-              onClick={openGallery}
-            >
-              Take Photo or Choose from Gallery
-            </button>
-            <button style={s.actionBtn("#581c87")} onClick={openPlainPicker}>
-              Open File Picker (Camera Fallback)
+            <button style={s.actionBtn("#6d28d9")} onClick={openGallery}>
+              Upload from Gallery
             </button>
           </div>
         )}
@@ -601,7 +727,7 @@ export default function Home() {
     );
   }
 
-  // ── TYPE WINE VIEW ───────────────────────────────────────
+  // ── TYPE WINE VIEW ──────────────────────────────────────────
   if (view === "type") {
     return (
       <div style={s.container}>
@@ -667,7 +793,7 @@ export default function Home() {
     );
   }
 
-  // ── CELLAR VIEW ──────────────────────────────────────────
+  // ── CELLAR VIEW ─────────────────────────────────────────────
   if (view === "cellar") {
     return (
       <div style={s.container}>
@@ -766,7 +892,7 @@ export default function Home() {
     );
   }
 
-  // ── HOME VIEW ────────────────────────────────────────────
+  // ── HOME VIEW ───────────────────────────────────────────────
   return (
     <div style={s.container}>
       {hiddenInputs}
