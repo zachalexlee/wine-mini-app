@@ -20,17 +20,32 @@ interface CellarEntry extends WineData {
   savedAt: string;
 }
 
-declare global {
-  interface Window {
-    Telegram?: {
-      WebApp: {
-        ready: () => void;
-        expand: () => void;
-        close: () => void;
-        initDataUnsafe: { user?: { id: number } } & Record<string, unknown>;
-        themeParams: Record<string, string>;
-      };
-    };
+// ── Safely access Telegram WebApp ────────────────────────────
+function getTelegramWebApp() {
+  try {
+    if (typeof window !== "undefined" && window.Telegram?.WebApp) {
+      return window.Telegram.WebApp;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+// ── Safe localStorage wrapper ────────────────────────────────
+function safeGetItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSetItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // localStorage not available (e.g. Telegram WebView)
   }
 }
 
@@ -49,19 +64,23 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function getUserId(): string {
-  if (
-    typeof window !== "undefined" &&
-    window.Telegram?.WebApp?.initDataUnsafe?.user?.id
-  ) {
-    return String(window.Telegram.WebApp.initDataUnsafe.user.id);
+  // Try Telegram user ID first
+  const tg = getTelegramWebApp();
+  try {
+    const tgUser = tg?.initDataUnsafe?.user;
+    if (tgUser && tgUser.id) {
+      return String(tgUser.id);
+    }
+  } catch {
+    // ignore
   }
   // Fallback for testing outside Telegram
-  let id = localStorage.getItem("wine_user_id");
+  let id = safeGetItem("wine_user_id");
   if (!id) {
     id = "user_" + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem("wine_user_id", id);
+    safeSetItem("wine_user_id", id);
   }
-  return id;
+  return id || "anonymous";
 }
 
 // ── Component ────────────────────────────────────────────────
@@ -85,14 +104,20 @@ export default function Home() {
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [cellarLoading, setCellarLoading] = useState(false);
 
+  // Two separate refs — one for camera, one for gallery
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Notify Telegram that the Mini App is ready
   useEffect(() => {
-    if (typeof window !== "undefined" && window.Telegram?.WebApp) {
-      window.Telegram.WebApp.ready();
-      window.Telegram.WebApp.expand();
+    try {
+      const tg = getTelegramWebApp();
+      if (tg) {
+        tg.ready();
+        tg.expand();
+      }
+    } catch {
+      // not inside Telegram, that's fine
     }
   }, []);
 
@@ -100,7 +125,8 @@ export default function Home() {
   const fetchCellar = useCallback(async () => {
     setCellarLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/cellar/${getUserId()}`);
+      const uid = getUserId();
+      const res = await fetch(`${API_BASE}/api/cellar/${uid}`);
       const data = await res.json();
       setCellar(data.wines || []);
     } catch {
@@ -113,10 +139,11 @@ export default function Home() {
   // ── Save to cellar ──────────────────────────────────────
   const saveWine = async (wine: WineData): Promise<boolean> => {
     try {
+      const uid = getUserId();
       const res = await fetch(`${API_BASE}/api/cellar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: getUserId(), wine }),
+        body: JSON.stringify({ userId: uid, wine }),
       });
       const data = await res.json();
       return data.success === true;
@@ -128,7 +155,8 @@ export default function Home() {
   // ── Delete from cellar ──────────────────────────────────
   const deleteWine = async (wineId: string) => {
     try {
-      await fetch(`${API_BASE}/api/cellar/${getUserId()}/${wineId}`, {
+      const uid = getUserId();
+      await fetch(`${API_BASE}/api/cellar/${uid}/${wineId}`, {
         method: "DELETE",
       });
       setCellar((prev) => prev.filter((w) => w.id !== wineId));
@@ -150,8 +178,13 @@ export default function Home() {
     setScanResult(null);
     setSaved(false);
 
-    const preview = URL.createObjectURL(file);
-    setPreviewUrl(preview);
+    let preview = "";
+    try {
+      preview = URL.createObjectURL(file);
+      setPreviewUrl(preview);
+    } catch {
+      setPreviewUrl(null);
+    }
 
     try {
       const base64 = await fileToBase64(file);
@@ -207,6 +240,9 @@ export default function Home() {
     }
   };
 
+  // ── Camera / Gallery openers ─────────────────────────────
+  // Camera: uses a dedicated input with capture="environment"
+  // Gallery: uses a separate input without capture
   const openCamera = () => {
     if (cameraInputRef.current) {
       cameraInputRef.current.value = "";
@@ -241,6 +277,7 @@ export default function Home() {
       background:
         "linear-gradient(160deg, #1a0a2e 0%, #2d1b4e 50%, #4a1942 100%)",
       color: "#f5f0eb",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     } as React.CSSProperties,
     header: { textAlign: "center" as const, marginBottom: 32 },
     title: { fontSize: 26, fontWeight: 700, margin: "0 0 4px" },
@@ -288,7 +325,11 @@ export default function Home() {
       fontSize: 12,
       fontWeight: 600,
       background:
-        level === "high" ? "#16a34a" : level === "medium" ? "#ca8a04" : "#dc2626",
+        level === "high"
+          ? "#16a34a"
+          : level === "medium"
+          ? "#ca8a04"
+          : "#dc2626",
       color: "#fff",
       marginLeft: 8,
     }),
@@ -336,9 +377,9 @@ export default function Home() {
   };
 
   // ── Hidden file inputs ───────────────────────────────────
-  // Two separate inputs: one with capture="environment" (camera)
-  // and one without (gallery). This is the only reliable way to
-  // force the camera on mobile browsers and Telegram WebView.
+  // Camera input: has capture="environment" to request rear camera
+  // Gallery input: no capture attribute, opens file/photo picker
+  // Both are always rendered in the DOM so refs are stable.
   const hiddenInputs = (
     <>
       <input
@@ -371,12 +412,14 @@ export default function Home() {
   }) => (
     <>
       <div style={s.card}>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+        <div
+          style={{ display: "flex", alignItems: "center", marginBottom: 8 }}
+        >
           <h3 style={{ margin: 0, flex: 1 }}>{wine.wine}</h3>
           <span style={s.badge(wine.confidence)}>{wine.confidence}</span>
         </div>
         <p style={{ margin: "4px 0", opacity: 0.8 }}>
-          {wine.type} · {wine.vintage}
+          {wine.type} &middot; {wine.vintage}
         </p>
         <p style={{ margin: "4px 0" }}>
           <strong>Region:</strong> {wine.region}
@@ -391,12 +434,19 @@ export default function Home() {
           OPTIMAL DRINKING WINDOW
         </p>
         <p style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
-          {wine.drinkWindow.from} – {wine.drinkWindow.to}
+          {wine.drinkWindow.from} &ndash; {wine.drinkWindow.to}
         </p>
       </div>
 
       <div style={s.card}>
-        <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, opacity: 0.7 }}>
+        <p
+          style={{
+            margin: "0 0 4px",
+            fontSize: 13,
+            fontWeight: 600,
+            opacity: 0.7,
+          }}
+        >
           SOMMELIER NOTES
         </p>
         <p style={{ margin: 0, lineHeight: 1.6 }}>{wine.recommendation}</p>
@@ -407,7 +457,7 @@ export default function Home() {
         onClick={onSave}
         disabled={isSaved}
       >
-        {isSaved ? "✓ Saved to Cellar" : "🍷 Save to My Cellar"}
+        {isSaved ? "\u2713 Saved to Cellar" : "\uD83C\uDF77 Save to My Cellar"}
       </button>
     </>
   );
@@ -419,11 +469,14 @@ export default function Home() {
         {hiddenInputs}
         <button
           style={s.back}
-          onClick={() => { resetScan(); setView("home"); }}
+          onClick={() => {
+            resetScan();
+            setView("home");
+          }}
         >
-          ← Back
+          &larr; Back
         </button>
-        <h2>📸 Scan Bottle</h2>
+        <h2>Scan Bottle</h2>
 
         {previewUrl && (
           <img src={previewUrl} alt="Wine label" style={s.preview} />
@@ -432,9 +485,16 @@ export default function Home() {
         {loading && (
           <div style={s.card}>
             <p style={{ margin: 0, textAlign: "center" }}>
-              🔍 Analyzing wine label...
+              Analyzing wine label...
             </p>
-            <p style={{ margin: "8px 0 0", textAlign: "center", opacity: 0.6, fontSize: 13 }}>
+            <p
+              style={{
+                margin: "8px 0 0",
+                textAlign: "center",
+                opacity: 0.6,
+                fontSize: 13,
+              }}
+            >
               Our AI sommelier is studying the label
             </p>
           </div>
@@ -445,7 +505,9 @@ export default function Home() {
             <p style={{ margin: 0, color: "#f87171" }}>{errorMsg}</p>
             <button
               style={s.actionBtn("#7c3aed")}
-              onClick={() => { resetScan(); openCamera(); }}
+              onClick={() => {
+                resetScan();
+              }}
             >
               Try Again
             </button>
@@ -464,7 +526,9 @@ export default function Home() {
             />
             <button
               style={s.actionBtn("#7c3aed")}
-              onClick={() => { resetScan(); openCamera(); }}
+              onClick={() => {
+                resetScan();
+              }}
             >
               Scan Another Bottle
             </button>
@@ -473,17 +537,27 @@ export default function Home() {
 
         {!loading && !scanResult && !errorMsg && (
           <div style={s.card}>
-            <p style={{ margin: "0 0 16px", textAlign: "center", opacity: 0.7 }}>
+            <p
+              style={{
+                margin: "0 0 16px",
+                textAlign: "center",
+                opacity: 0.7,
+              }}
+            >
               Take a photo of a wine label or choose from your gallery
             </p>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={s.actionBtn("#7c3aed")} onClick={openCamera}>
-                📷 Camera
-              </button>
-              <button style={s.actionBtn("#6d28d9")} onClick={openGallery}>
-                🖼️ Gallery
-              </button>
-            </div>
+            <button
+              style={{
+                ...s.actionBtn("#7c3aed"),
+                marginBottom: 8,
+              }}
+              onClick={openCamera}
+            >
+              Take Photo
+            </button>
+            <button style={s.actionBtn("#6d28d9")} onClick={openGallery}>
+              Choose from Gallery
+            </button>
           </div>
         )}
       </div>
@@ -504,9 +578,9 @@ export default function Home() {
             setLookupSaved(false);
           }}
         >
-          ← Back
+          &larr; Back
         </button>
-        <h2>✏️ Type Wine</h2>
+        <h2>Type Wine</h2>
 
         <div style={s.card}>
           <p style={{ margin: "0 0 12px", opacity: 0.7, fontSize: 14 }}>
@@ -532,7 +606,7 @@ export default function Home() {
             onClick={handleLookup}
             disabled={loading || !wineName.trim()}
           >
-            {loading ? "🔍 Looking up..." : "Look Up Wine"}
+            {loading ? "Looking up..." : "Look Up Wine"}
           </button>
         </div>
 
@@ -562,12 +636,14 @@ export default function Home() {
       <div style={s.container}>
         {hiddenInputs}
         <button style={s.back} onClick={() => setView("home")}>
-          ← Back
+          &larr; Back
         </button>
-        <h2>🍷 My Cellar</h2>
+        <h2>My Cellar</h2>
 
         {cellarLoading && (
-          <p style={{ textAlign: "center", opacity: 0.6 }}>Loading your cellar...</p>
+          <p style={{ textAlign: "center", opacity: 0.6 }}>
+            Loading your cellar...
+          </p>
         )}
 
         {!cellarLoading && cellar.length === 0 && (
@@ -583,10 +659,10 @@ export default function Home() {
           const now = new Date().getFullYear();
           const status =
             now < entry.drinkWindow.from
-              ? "🕐 Too early"
+              ? "Too early"
               : now > entry.drinkWindow.to
-              ? "⚠️ Past peak"
-              : "✅ Ready to drink";
+              ? "Past peak"
+              : "Ready to drink";
           const statusColor =
             now < entry.drinkWindow.from
               ? "#ca8a04"
@@ -602,7 +678,8 @@ export default function Home() {
                     {entry.wine}
                   </h3>
                   <p style={{ margin: "2px 0", opacity: 0.7, fontSize: 13 }}>
-                    {entry.type} · {entry.vintage} · {entry.region}
+                    {entry.type} &middot; {entry.vintage} &middot;{" "}
+                    {entry.region}
                   </p>
                 </div>
                 <button
@@ -617,7 +694,7 @@ export default function Home() {
                   }}
                   title="Remove"
                 >
-                  ✕
+                  &times;
                 </button>
               </div>
               <div
@@ -632,7 +709,8 @@ export default function Home() {
                 }}
               >
                 <span style={{ fontSize: 13 }}>
-                  Drink: {entry.drinkWindow.from}–{entry.drinkWindow.to}
+                  Drink: {entry.drinkWindow.from}&ndash;
+                  {entry.drinkWindow.to}
                 </span>
                 <span
                   style={{
@@ -653,13 +731,13 @@ export default function Home() {
 
   // ── HOME VIEW ────────────────────────────────────────────
   return (
-      <div style={s.container}>
+    <div style={s.container}>
       {hiddenInputs}
       <div style={s.header}>
-        <p style={{ fontSize: 48, margin: "0 0 8px" }}>🍷</p>
+        <p style={{ fontSize: 48, margin: "0 0 8px" }}>&#127863;</p>
         <h1 style={s.title}>Wine Aging Assistant</h1>
         <p style={s.subtitle}>
-          Scan a label · Look up a vintage · Track your cellar
+          Scan a label &middot; Look up a vintage &middot; Track your cellar
         </p>
       </div>
 
@@ -667,7 +745,7 @@ export default function Home() {
         style={{ ...s.btn, background: "#7c3aed" }}
         onClick={() => setView("scan")}
       >
-        📸&nbsp; Scan Bottle
+        Scan Bottle
       </button>
 
       <button
@@ -681,7 +759,7 @@ export default function Home() {
           setView("type");
         }}
       >
-        ✏️&nbsp; Type Wine
+        Type Wine
       </button>
 
       <button
@@ -691,7 +769,7 @@ export default function Home() {
           setView("cellar");
         }}
       >
-        🏠&nbsp; My Cellar
+        My Cellar
       </button>
 
       <p
