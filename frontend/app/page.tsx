@@ -81,7 +81,7 @@ function getUserId(): string {
 
 // ── Component ────────────────────────────────────────────────
 export default function Home() {
-  type View = "home" | "scan" | "type" | "cellar";
+  type View = "home" | "scan" | "type" | "cellar" | "cellar-detail";
 
   const [view, setView] = useState<View>("home");
   const [scanResult, setScanResult] = useState<WineData | null>(null);
@@ -99,6 +99,7 @@ export default function Home() {
   // Cellar state
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [cellarLoading, setCellarLoading] = useState(false);
+  const [selectedWine, setSelectedWine] = useState<CellarEntry | null>(null);
 
   // Camera state
   const [cameraActive, setCameraActive] = useState(false);
@@ -793,6 +794,119 @@ export default function Home() {
     );
   }
 
+  // ── CELLAR DETAIL VIEW ──────────────────────────────────────
+  if (view === "cellar-detail" && selectedWine) {
+    const now = new Date().getFullYear();
+    const status =
+      now < selectedWine.drinkWindow.from
+        ? "Too early"
+        : now > selectedWine.drinkWindow.to
+        ? "Past peak"
+        : "Ready to drink";
+    const statusColor =
+      now < selectedWine.drinkWindow.from
+        ? "#ca8a04"
+        : now > selectedWine.drinkWindow.to
+        ? "#dc2626"
+        : "#16a34a";
+
+    return (
+      <div style={s.container}>
+        {hiddenInputs}
+        <button
+          style={s.back}
+          onClick={() => {
+            setSelectedWine(null);
+            setView("cellar");
+          }}
+        >
+          &larr; Back to Cellar
+        </button>
+
+        {/* Full wine detail card */}
+        <div style={s.card}>
+          <div
+            style={{ display: "flex", alignItems: "center", marginBottom: 8 }}
+          >
+            <h3 style={{ margin: 0, flex: 1 }}>{selectedWine.wine}</h3>
+            <span style={s.badge(selectedWine.confidence)}>
+              {selectedWine.confidence}
+            </span>
+          </div>
+          <p style={{ margin: "4px 0", opacity: 0.8 }}>
+            {selectedWine.type} &middot; {selectedWine.vintage}
+          </p>
+          <p style={{ margin: "4px 0" }}>
+            <strong>Region:</strong> {selectedWine.region}
+          </p>
+          <p style={{ margin: "4px 0" }}>
+            <strong>Grape:</strong> {selectedWine.grape}
+          </p>
+        </div>
+
+        <div style={s.drinkWindow}>
+          <p style={{ margin: "0 0 4px", fontSize: 13, opacity: 0.7 }}>
+            OPTIMAL DRINKING WINDOW
+          </p>
+          <p style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
+            {selectedWine.drinkWindow.from} &ndash;{" "}
+            {selectedWine.drinkWindow.to}
+          </p>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 14,
+              fontWeight: 600,
+              color: statusColor,
+            }}
+          >
+            {status}
+          </p>
+        </div>
+
+        <div style={s.card}>
+          <p
+            style={{
+              margin: "0 0 4px",
+              fontSize: 13,
+              fontWeight: 600,
+              opacity: 0.7,
+            }}
+          >
+            SOMMELIER NOTES
+          </p>
+          <p style={{ margin: 0, lineHeight: 1.6 }}>
+            {selectedWine.recommendation}
+          </p>
+        </div>
+
+        <p
+          style={{
+            fontSize: 12,
+            opacity: 0.4,
+            textAlign: "center",
+            marginTop: 16,
+          }}
+        >
+          Saved on{" "}
+          {new Date(selectedWine.savedAt).toLocaleDateString()}
+        </p>
+
+        <button
+          style={s.actionBtn("#dc2626")}
+          onClick={async () => {
+            await deleteWine(selectedWine.id);
+            setSelectedWine(null);
+            fetchCellar();
+            setView("cellar");
+          }}
+        >
+          Remove from Cellar
+        </button>
+      </div>
+    );
+  }
+
   // ── CELLAR VIEW ─────────────────────────────────────────────
   if (view === "cellar") {
     return (
@@ -834,7 +948,14 @@ export default function Home() {
               : "#16a34a";
 
           return (
-            <div key={entry.id} style={s.cellarItem}>
+            <div
+              key={entry.id}
+              style={{ ...s.cellarItem, cursor: "pointer" }}
+              onClick={() => {
+                setSelectedWine(entry);
+                setView("cellar-detail");
+              }}
+            >
               <div style={{ display: "flex", alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
                   <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>
@@ -846,7 +967,10 @@ export default function Home() {
                   </p>
                 </div>
                 <button
-                  onClick={() => deleteWine(entry.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteWine(entry.id);
+                  }}
                   style={{
                     background: "none",
                     border: "none",
@@ -885,6 +1009,16 @@ export default function Home() {
                   {status}
                 </span>
               </div>
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  fontSize: 12,
+                  opacity: 0.4,
+                  textAlign: "right",
+                }}
+              >
+                Tap for details &rarr;
+              </p>
             </div>
           );
         })}
