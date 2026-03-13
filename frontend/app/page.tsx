@@ -85,7 +85,8 @@ export default function Home() {
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [cellarLoading, setCellarLoading] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Notify Telegram that the Mini App is ready
   useEffect(() => {
@@ -207,18 +208,16 @@ export default function Home() {
   };
 
   const openCamera = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.setAttribute("capture", "environment");
-      fileInputRef.current.setAttribute("accept", "image/*");
-      fileInputRef.current.click();
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = "";
+      cameraInputRef.current.click();
     }
   };
 
   const openGallery = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.removeAttribute("capture");
-      fileInputRef.current.setAttribute("accept", "image/*");
-      fileInputRef.current.click();
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = "";
+      galleryInputRef.current.click();
     }
   };
 
@@ -228,7 +227,8 @@ export default function Home() {
     setPreviewUrl(null);
     setLoading(false);
     setSaved(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
   };
 
   // ── Styles ───────────────────────────────────────────────
@@ -335,15 +335,28 @@ export default function Home() {
     },
   };
 
-  // ── Hidden file input ────────────────────────────────────
-  const hiddenInput = (
-    <input
-      ref={fileInputRef}
-      type="file"
-      accept="image/*"
-      style={{ display: "none" }}
-      onChange={handleFileSelected}
-    />
+  // ── Hidden file inputs ───────────────────────────────────
+  // Two separate inputs: one with capture="environment" (camera)
+  // and one without (gallery). This is the only reliable way to
+  // force the camera on mobile browsers and Telegram WebView.
+  const hiddenInputs = (
+    <>
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleFileSelected}
+      />
+    </>
   );
 
   // ── Wine Result Card (reused in scan + lookup) ───────────
@@ -403,7 +416,7 @@ export default function Home() {
   if (view === "scan") {
     return (
       <div style={s.container}>
-        {hiddenInput}
+        {hiddenInputs}
         <button
           style={s.back}
           onClick={() => { resetScan(); setView("home"); }}
@@ -481,7 +494,7 @@ export default function Home() {
   if (view === "type") {
     return (
       <div style={s.container}>
-        {hiddenInput}
+        {hiddenInputs}
         <button
           style={s.back}
           onClick={() => {
@@ -547,7 +560,7 @@ export default function Home() {
   if (view === "cellar") {
     return (
       <div style={s.container}>
-        {hiddenInput}
+        {hiddenInputs}
         <button style={s.back} onClick={() => setView("home")}>
           ← Back
         </button>
@@ -640,8 +653,8 @@ export default function Home() {
 
   // ── HOME VIEW ────────────────────────────────────────────
   return (
-    <div style={s.container}>
-      {hiddenInput}
+      <div style={s.container}>
+      {hiddenInputs}
       <div style={s.header}>
         <p style={{ fontSize: 48, margin: "0 0 8px" }}>🍷</p>
         <h1 style={s.title}>Wine Aging Assistant</h1>
