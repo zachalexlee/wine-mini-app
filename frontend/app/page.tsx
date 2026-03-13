@@ -104,9 +104,10 @@ export default function Home() {
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [cellarLoading, setCellarLoading] = useState(false);
 
-  // Two separate refs — one for camera, one for gallery
+  // Three separate refs for different capture modes
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  const plainInputRef = useRef<HTMLInputElement>(null);
 
   // Notify Telegram that the Mini App is ready
   useEffect(() => {
@@ -241,19 +242,34 @@ export default function Home() {
   };
 
   // ── Camera / Gallery openers ─────────────────────────────
-  // Camera: uses a dedicated input with capture="environment"
-  // Gallery: uses a separate input without capture
+  // Camera: uses capture="environment" (works on iOS + older Android)
+  // If that fails (Android 14/15 + Telegram WebView), falls back to
+  // a plain <input type="file"> which shows camera in the chooser.
   const openCamera = () => {
+    // Try the capture input first; on Android 14/15 in Telegram
+    // WebView this may still open photos, so we also have the
+    // plain input as a fallback the user can try.
     if (cameraInputRef.current) {
       cameraInputRef.current.value = "";
       cameraInputRef.current.click();
     }
   };
 
+  // "Choose Photo" — uses the android/allowCamera trick to show
+  // both Camera and Gallery options on Android 14/15 Chrome.
   const openGallery = () => {
     if (galleryInputRef.current) {
       galleryInputRef.current.value = "";
       galleryInputRef.current.click();
+    }
+  };
+
+  // Plain file input — no accept filter, guaranteed to show camera
+  // option on all Android versions as a last resort.
+  const openPlainPicker = () => {
+    if (plainInputRef.current) {
+      plainInputRef.current.value = "";
+      plainInputRef.current.click();
     }
   };
 
@@ -265,6 +281,7 @@ export default function Home() {
     setSaved(false);
     if (cameraInputRef.current) cameraInputRef.current.value = "";
     if (galleryInputRef.current) galleryInputRef.current.value = "";
+    if (plainInputRef.current) plainInputRef.current.value = "";
   };
 
   // ── Styles ───────────────────────────────────────────────
@@ -377,9 +394,14 @@ export default function Home() {
   };
 
   // ── Hidden file inputs ───────────────────────────────────
-  // Camera input: has capture="environment" to request rear camera
-  // Gallery input: no capture attribute, opens file/photo picker
-  // Both are always rendered in the DOM so refs are stable.
+  // 1. Camera input: capture="environment" — opens camera on iOS
+  //    and older Android. On Android 14/15 Telegram WebView it may
+  //    still open the photo picker (known platform bug).
+  // 2. Gallery input: uses "image/*,android/allowCamera" trick —
+  //    on Android 14/15 Chrome this restores the Camera option in
+  //    the chooser dialog alongside the gallery.
+  // 3. Plain input: no accept filter at all — guaranteed to show
+  //    camera option on every Android version as a last resort.
   const hiddenInputs = (
     <>
       <input
@@ -393,7 +415,13 @@ export default function Home() {
       <input
         ref={galleryInputRef}
         type="file"
-        accept="image/*"
+        accept="image/*,android/allowCamera"
+        style={{ display: "none" }}
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={plainInputRef}
+        type="file"
         style={{ display: "none" }}
         onChange={handleFileSelected}
       />
@@ -553,10 +581,19 @@ export default function Home() {
               }}
               onClick={openCamera}
             >
-              Take Photo
+              Take Photo (iOS)
             </button>
-            <button style={s.actionBtn("#6d28d9")} onClick={openGallery}>
-              Choose from Gallery
+            <button
+              style={{
+                ...s.actionBtn("#6d28d9"),
+                marginBottom: 8,
+              }}
+              onClick={openGallery}
+            >
+              Take Photo or Choose from Gallery
+            </button>
+            <button style={s.actionBtn("#581c87")} onClick={openPlainPicker}>
+              Open File Picker (Camera Fallback)
             </button>
           </div>
         )}
