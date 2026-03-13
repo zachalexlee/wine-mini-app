@@ -1,0 +1,12 @@
+{
+  "name": "wine-mini-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo root — used by Railway to install backend dependencies",
+  "scripts": {
+    "postinstall": "cd backend && npm install"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

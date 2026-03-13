@@ -87,6 +87,6 @@ app.get("/", (req, res) => {
 });
 
 // ── Start server ─────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`🍷 Wine Aging Assistant backend running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🍷 Wine Aging Assistant backend running on 0.0.0.0:${PORT}`);
 });
