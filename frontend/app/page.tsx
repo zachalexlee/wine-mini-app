@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ── Types ────────────────────────────────────────────────────
-interface ScanResult {
+interface WineData {
   wine: string;
   vintage: number;
   region: string;
@@ -15,6 +15,11 @@ interface ScanResult {
   error?: string;
 }
 
+interface CellarEntry extends WineData {
+  id: string;
+  savedAt: string;
+}
+
 declare global {
   interface Window {
     Telegram?: {
@@ -22,7 +27,7 @@ declare global {
         ready: () => void;
         expand: () => void;
         close: () => void;
-        initDataUnsafe: Record<string, unknown>;
+        initDataUnsafe: { user?: { id: number } } & Record<string, unknown>;
         themeParams: Record<string, string>;
       };
     };
@@ -33,7 +38,7 @@ declare global {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://wine-mini-app.vercel.app";
 
-// ── Helper: convert File to base64 ──────────────────────────
+// ── Helpers ──────────────────────────────────────────────────
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -43,15 +48,43 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function getUserId(): string {
+  if (
+    typeof window !== "undefined" &&
+    window.Telegram?.WebApp?.initDataUnsafe?.user?.id
+  ) {
+    return String(window.Telegram.WebApp.initDataUnsafe.user.id);
+  }
+  // Fallback for testing outside Telegram
+  let id = localStorage.getItem("wine_user_id");
+  if (!id) {
+    id = "user_" + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem("wine_user_id", id);
+  }
+  return id;
+}
+
 // ── Component ────────────────────────────────────────────────
 export default function Home() {
-  const [view, setView] = useState<"home" | "scan" | "type" | "cellar">(
-    "home"
-  );
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  type View = "home" | "scan" | "type" | "cellar";
+
+  const [view, setView] = useState<View>("home");
+  const [scanResult, setScanResult] = useState<WineData | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Manual entry state
+  const [wineName, setWineName] = useState("");
+  const [vintageInput, setVintageInput] = useState("");
+  const [lookupResult, setLookupResult] = useState<WineData | null>(null);
+  const [lookupSaved, setLookupSaved] = useState(false);
+
+  // Cellar state
+  const [cellar, setCellar] = useState<CellarEntry[]>([]);
+  const [cellarLoading, setCellarLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Notify Telegram that the Mini App is ready
@@ -61,6 +94,47 @@ export default function Home() {
       window.Telegram.WebApp.expand();
     }
   }, []);
+
+  // ── Cellar fetch ─────────────────────────────────────────
+  const fetchCellar = useCallback(async () => {
+    setCellarLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/cellar/${getUserId()}`);
+      const data = await res.json();
+      setCellar(data.wines || []);
+    } catch {
+      setCellar([]);
+    } finally {
+      setCellarLoading(false);
+    }
+  }, []);
+
+  // ── Save to cellar ──────────────────────────────────────
+  const saveWine = async (wine: WineData): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/cellar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: getUserId(), wine }),
+      });
+      const data = await res.json();
+      return data.success === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // ── Delete from cellar ──────────────────────────────────
+  const deleteWine = async (wineId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/cellar/${getUserId()}/${wineId}`, {
+        method: "DELETE",
+      });
+      setCellar((prev) => prev.filter((w) => w.id !== wineId));
+    } catch {
+      // silently fail
+    }
+  };
 
   // ── Scan handler ─────────────────────────────────────────
   const handleFileSelected = async (
@@ -73,35 +147,60 @@ export default function Home() {
     setLoading(true);
     setErrorMsg(null);
     setScanResult(null);
+    setSaved(false);
 
-    // Show preview
     const preview = URL.createObjectURL(file);
     setPreviewUrl(preview);
 
     try {
       const base64 = await fileToBase64(file);
-
       const res = await fetch(`${API_BASE}/api/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64 }),
       });
-
-      if (!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
-      }
-
-      const data: ScanResult = await res.json();
-
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data: WineData = await res.json();
       if (data.error) {
         setErrorMsg(data.error);
       } else {
         setScanResult(data);
       }
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Unknown error";
+      const message = err instanceof Error ? err.message : "Unknown error";
       setErrorMsg(`Failed to analyze: ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Manual lookup handler ────────────────────────────────
+  const handleLookup = async () => {
+    if (!wineName.trim()) return;
+    setLoading(true);
+    setErrorMsg(null);
+    setLookupResult(null);
+    setLookupSaved(false);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/lookup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wineName: wineName.trim(),
+          vintage: vintageInput.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data: WineData = await res.json();
+      if (data.error) {
+        setErrorMsg(data.error);
+      } else {
+        setLookupResult(data);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setErrorMsg(`Lookup failed: ${message}`);
     } finally {
       setLoading(false);
     }
@@ -128,11 +227,12 @@ export default function Home() {
     setErrorMsg(null);
     setPreviewUrl(null);
     setLoading(false);
+    setSaved(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // ── Styles ───────────────────────────────────────────────
-  const styles = {
+  const s = {
     container: {
       maxWidth: 420,
       margin: "0 auto",
@@ -142,20 +242,9 @@ export default function Home() {
         "linear-gradient(160deg, #1a0a2e 0%, #2d1b4e 50%, #4a1942 100%)",
       color: "#f5f0eb",
     } as React.CSSProperties,
-    header: {
-      textAlign: "center" as const,
-      marginBottom: 32,
-    },
-    title: {
-      fontSize: 26,
-      fontWeight: 700,
-      margin: "0 0 4px",
-    },
-    subtitle: {
-      fontSize: 14,
-      opacity: 0.7,
-      margin: 0,
-    },
+    header: { textAlign: "center" as const, marginBottom: 32 },
+    title: { fontSize: 26, fontWeight: 700, margin: "0 0 4px" },
+    subtitle: { fontSize: 14, opacity: 0.7, margin: 0 },
     btn: {
       display: "block",
       width: "100%",
@@ -169,9 +258,6 @@ export default function Home() {
       color: "#fff",
       textAlign: "left" as const,
     },
-    btnScan: { background: "#7c3aed" },
-    btnType: { background: "#be185d" },
-    btnCellar: { background: "#b45309" },
     card: {
       background: "rgba(255,255,255,0.08)",
       borderRadius: 14,
@@ -195,18 +281,14 @@ export default function Home() {
       borderRadius: 12,
       marginBottom: 16,
     },
-    confidenceBadge: (level: string) => ({
+    badge: (level: string) => ({
       display: "inline-block",
       padding: "3px 10px",
       borderRadius: 20,
       fontSize: 12,
       fontWeight: 600,
       background:
-        level === "high"
-          ? "#16a34a"
-          : level === "medium"
-          ? "#ca8a04"
-          : "#dc2626",
+        level === "high" ? "#16a34a" : level === "medium" ? "#ca8a04" : "#dc2626",
       color: "#fff",
       marginLeft: 8,
     }),
@@ -218,13 +300,9 @@ export default function Home() {
       margin: "12px 0",
       textAlign: "center" as const,
     },
-    scanBtnGroup: {
-      display: "flex",
-      gap: 10,
-      marginTop: 8,
-    },
-    scanBtn: {
-      flex: 1,
+    actionBtn: (bg: string) => ({
+      display: "block",
+      width: "100%",
       padding: "14px 12px",
       border: "none",
       borderRadius: 12,
@@ -233,6 +311,27 @@ export default function Home() {
       cursor: "pointer",
       color: "#fff",
       textAlign: "center" as const,
+      background: bg,
+      marginTop: 10,
+    }),
+    input: {
+      width: "100%",
+      padding: "14px 16px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.2)",
+      background: "rgba(255,255,255,0.08)",
+      color: "#f5f0eb",
+      fontSize: 15,
+      outline: "none",
+      marginBottom: 10,
+      boxSizing: "border-box" as const,
+    },
+    cellarItem: {
+      background: "rgba(255,255,255,0.06)",
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 12,
+      border: "1px solid rgba(255,255,255,0.08)",
     },
   };
 
@@ -247,57 +346,93 @@ export default function Home() {
     />
   );
 
-  // ── Scan View ────────────────────────────────────────────
+  // ── Wine Result Card (reused in scan + lookup) ───────────
+  const WineCard = ({
+    wine,
+    onSave,
+    isSaved,
+  }: {
+    wine: WineData;
+    onSave: () => void;
+    isSaved: boolean;
+  }) => (
+    <>
+      <div style={s.card}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+          <h3 style={{ margin: 0, flex: 1 }}>{wine.wine}</h3>
+          <span style={s.badge(wine.confidence)}>{wine.confidence}</span>
+        </div>
+        <p style={{ margin: "4px 0", opacity: 0.8 }}>
+          {wine.type} · {wine.vintage}
+        </p>
+        <p style={{ margin: "4px 0" }}>
+          <strong>Region:</strong> {wine.region}
+        </p>
+        <p style={{ margin: "4px 0" }}>
+          <strong>Grape:</strong> {wine.grape}
+        </p>
+      </div>
+
+      <div style={s.drinkWindow}>
+        <p style={{ margin: "0 0 4px", fontSize: 13, opacity: 0.7 }}>
+          OPTIMAL DRINKING WINDOW
+        </p>
+        <p style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
+          {wine.drinkWindow.from} – {wine.drinkWindow.to}
+        </p>
+      </div>
+
+      <div style={s.card}>
+        <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, opacity: 0.7 }}>
+          SOMMELIER NOTES
+        </p>
+        <p style={{ margin: 0, lineHeight: 1.6 }}>{wine.recommendation}</p>
+      </div>
+
+      <button
+        style={s.actionBtn(isSaved ? "#16a34a" : "#b45309")}
+        onClick={onSave}
+        disabled={isSaved}
+      >
+        {isSaved ? "✓ Saved to Cellar" : "🍷 Save to My Cellar"}
+      </button>
+    </>
+  );
+
+  // ── SCAN VIEW ────────────────────────────────────────────
   if (view === "scan") {
     return (
-      <div style={styles.container}>
+      <div style={s.container}>
         {hiddenInput}
         <button
-          style={styles.back}
-          onClick={() => {
-            resetScan();
-            setView("home");
-          }}
+          style={s.back}
+          onClick={() => { resetScan(); setView("home"); }}
         >
           ← Back
         </button>
         <h2>📸 Scan Bottle</h2>
 
         {previewUrl && (
-          <img src={previewUrl} alt="Wine label" style={styles.preview} />
+          <img src={previewUrl} alt="Wine label" style={s.preview} />
         )}
 
         {loading && (
-          <div style={styles.card}>
+          <div style={s.card}>
             <p style={{ margin: 0, textAlign: "center" }}>
               🔍 Analyzing wine label...
             </p>
-            <p
-              style={{
-                margin: "8px 0 0",
-                textAlign: "center",
-                opacity: 0.6,
-                fontSize: 13,
-              }}
-            >
+            <p style={{ margin: "8px 0 0", textAlign: "center", opacity: 0.6, fontSize: 13 }}>
               Our AI sommelier is studying the label
             </p>
           </div>
         )}
 
         {errorMsg && (
-          <div style={styles.card}>
+          <div style={s.card}>
             <p style={{ margin: 0, color: "#f87171" }}>{errorMsg}</p>
             <button
-              style={{
-                ...styles.scanBtn,
-                background: "#7c3aed",
-                marginTop: 12,
-              }}
-              onClick={() => {
-                resetScan();
-                openCamera();
-              }}
+              style={s.actionBtn("#7c3aed")}
+              onClick={() => { resetScan(); openCamera(); }}
             >
               Try Again
             </button>
@@ -306,80 +441,17 @@ export default function Home() {
 
         {scanResult && (
           <>
-            <div style={styles.card}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  marginBottom: 8,
-                }}
-              >
-                <h3 style={{ margin: 0, flex: 1 }}>{scanResult.wine}</h3>
-                <span
-                  style={styles.confidenceBadge(scanResult.confidence)}
-                >
-                  {scanResult.confidence}
-                </span>
-              </div>
-              <p style={{ margin: "4px 0", opacity: 0.8 }}>
-                {scanResult.type} · {scanResult.vintage}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>Region:</strong> {scanResult.region}
-              </p>
-              <p style={{ margin: "4px 0" }}>
-                <strong>Grape:</strong> {scanResult.grape}
-              </p>
-            </div>
-
-            <div style={styles.drinkWindow}>
-              <p
-                style={{
-                  margin: "0 0 4px",
-                  fontSize: 13,
-                  opacity: 0.7,
-                }}
-              >
-                OPTIMAL DRINKING WINDOW
-              </p>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 24,
-                  fontWeight: 700,
-                }}
-              >
-                {scanResult.drinkWindow.from} – {scanResult.drinkWindow.to}
-              </p>
-            </div>
-
-            <div style={styles.card}>
-              <p
-                style={{
-                  margin: "0 0 4px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  opacity: 0.7,
-                }}
-              >
-                SOMMELIER NOTES
-              </p>
-              <p style={{ margin: 0, lineHeight: 1.6 }}>
-                {scanResult.recommendation}
-              </p>
-            </div>
-
+            <WineCard
+              wine={scanResult}
+              isSaved={saved}
+              onSave={async () => {
+                const ok = await saveWine(scanResult);
+                if (ok) setSaved(true);
+              }}
+            />
             <button
-              style={{
-                ...styles.scanBtn,
-                background: "#7c3aed",
-                marginTop: 16,
-                width: "100%",
-              }}
-              onClick={() => {
-                resetScan();
-                openCamera();
-              }}
+              style={s.actionBtn("#7c3aed")}
+              onClick={() => { resetScan(); openCamera(); }}
             >
               Scan Another Bottle
             </button>
@@ -387,27 +459,15 @@ export default function Home() {
         )}
 
         {!loading && !scanResult && !errorMsg && (
-          <div style={styles.card}>
-            <p
-              style={{
-                margin: "0 0 16px",
-                textAlign: "center",
-                opacity: 0.7,
-              }}
-            >
+          <div style={s.card}>
+            <p style={{ margin: "0 0 16px", textAlign: "center", opacity: 0.7 }}>
               Take a photo of a wine label or choose from your gallery
             </p>
-            <div style={styles.scanBtnGroup}>
-              <button
-                style={{ ...styles.scanBtn, background: "#7c3aed" }}
-                onClick={openCamera}
-              >
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={s.actionBtn("#7c3aed")} onClick={openCamera}>
                 📷 Camera
               </button>
-              <button
-                style={{ ...styles.scanBtn, background: "#6d28d9" }}
-                onClick={openGallery}
-              >
+              <button style={s.actionBtn("#6d28d9")} onClick={openGallery}>
                 🖼️ Gallery
               </button>
             </div>
@@ -417,73 +477,206 @@ export default function Home() {
     );
   }
 
-  // ── Type Wine View ───────────────────────────────────────
+  // ── TYPE WINE VIEW ───────────────────────────────────────
   if (view === "type") {
     return (
-      <div style={styles.container}>
+      <div style={s.container}>
         {hiddenInput}
-        <button style={styles.back} onClick={() => setView("home")}>
+        <button
+          style={s.back}
+          onClick={() => {
+            setView("home");
+            setLookupResult(null);
+            setErrorMsg(null);
+            setLookupSaved(false);
+          }}
+        >
           ← Back
         </button>
         <h2>✏️ Type Wine</h2>
-        <div style={styles.card}>
-          <p style={{ margin: 0, opacity: 0.7 }}>
-            Manual wine entry coming soon. You will be able to type a wine
-            name and vintage to look up its ideal drinking window.
+
+        <div style={s.card}>
+          <p style={{ margin: "0 0 12px", opacity: 0.7, fontSize: 14 }}>
+            Enter a wine name and optional vintage to look up its details and
+            drinking window.
           </p>
+          <input
+            style={s.input}
+            placeholder="Wine name (e.g. Opus One)"
+            value={wineName}
+            onChange={(e) => setWineName(e.target.value)}
+          />
+          <input
+            style={s.input}
+            placeholder="Vintage year (optional, e.g. 2018)"
+            value={vintageInput}
+            onChange={(e) => setVintageInput(e.target.value)}
+            type="number"
+            inputMode="numeric"
+          />
+          <button
+            style={s.actionBtn("#7c3aed")}
+            onClick={handleLookup}
+            disabled={loading || !wineName.trim()}
+          >
+            {loading ? "🔍 Looking up..." : "Look Up Wine"}
+          </button>
         </div>
+
+        {errorMsg && (
+          <div style={s.card}>
+            <p style={{ margin: 0, color: "#f87171" }}>{errorMsg}</p>
+          </div>
+        )}
+
+        {lookupResult && (
+          <WineCard
+            wine={lookupResult}
+            isSaved={lookupSaved}
+            onSave={async () => {
+              const ok = await saveWine(lookupResult);
+              if (ok) setLookupSaved(true);
+            }}
+          />
+        )}
       </div>
     );
   }
 
-  // ── Cellar View ──────────────────────────────────────────
+  // ── CELLAR VIEW ──────────────────────────────────────────
   if (view === "cellar") {
     return (
-      <div style={styles.container}>
+      <div style={s.container}>
         {hiddenInput}
-        <button style={styles.back} onClick={() => setView("home")}>
+        <button style={s.back} onClick={() => setView("home")}>
           ← Back
         </button>
         <h2>🍷 My Cellar</h2>
-        <div style={styles.card}>
-          <p style={{ margin: 0, opacity: 0.7 }}>
-            Your cellar is empty for now. Scanned and saved wines will
-            appear here once the feature is implemented.
-          </p>
-        </div>
+
+        {cellarLoading && (
+          <p style={{ textAlign: "center", opacity: 0.6 }}>Loading your cellar...</p>
+        )}
+
+        {!cellarLoading && cellar.length === 0 && (
+          <div style={s.card}>
+            <p style={{ margin: 0, opacity: 0.7, textAlign: "center" }}>
+              Your cellar is empty. Scan a bottle or type a wine name to add
+              your first bottle!
+            </p>
+          </div>
+        )}
+
+        {cellar.map((entry) => {
+          const now = new Date().getFullYear();
+          const status =
+            now < entry.drinkWindow.from
+              ? "🕐 Too early"
+              : now > entry.drinkWindow.to
+              ? "⚠️ Past peak"
+              : "✅ Ready to drink";
+          const statusColor =
+            now < entry.drinkWindow.from
+              ? "#ca8a04"
+              : now > entry.drinkWindow.to
+              ? "#dc2626"
+              : "#16a34a";
+
+          return (
+            <div key={entry.id} style={s.cellarItem}>
+              <div style={{ display: "flex", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>
+                    {entry.wine}
+                  </h3>
+                  <p style={{ margin: "2px 0", opacity: 0.7, fontSize: 13 }}>
+                    {entry.type} · {entry.vintage} · {entry.region}
+                  </p>
+                </div>
+                <button
+                  onClick={() => deleteWine(entry.id)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#f87171",
+                    fontSize: 18,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                  }}
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  background: "rgba(255,255,255,0.05)",
+                  borderRadius: 8,
+                }}
+              >
+                <span style={{ fontSize: 13 }}>
+                  Drink: {entry.drinkWindow.from}–{entry.drinkWindow.to}
+                </span>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: statusColor,
+                  }}
+                >
+                  {status}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
 
-  // ── Home View ────────────────────────────────────────────
+  // ── HOME VIEW ────────────────────────────────────────────
   return (
-    <div style={styles.container}>
+    <div style={s.container}>
       {hiddenInput}
-      <div style={styles.header}>
+      <div style={s.header}>
         <p style={{ fontSize: 48, margin: "0 0 8px" }}>🍷</p>
-        <h1 style={styles.title}>Wine Aging Assistant</h1>
-        <p style={styles.subtitle}>
+        <h1 style={s.title}>Wine Aging Assistant</h1>
+        <p style={s.subtitle}>
           Scan a label · Look up a vintage · Track your cellar
         </p>
       </div>
 
       <button
-        style={{ ...styles.btn, ...styles.btnScan }}
+        style={{ ...s.btn, background: "#7c3aed" }}
         onClick={() => setView("scan")}
       >
         📸&nbsp; Scan Bottle
       </button>
 
       <button
-        style={{ ...styles.btn, ...styles.btnType }}
-        onClick={() => setView("type")}
+        style={{ ...s.btn, background: "#be185d" }}
+        onClick={() => {
+          setWineName("");
+          setVintageInput("");
+          setLookupResult(null);
+          setErrorMsg(null);
+          setLookupSaved(false);
+          setView("type");
+        }}
       >
         ✏️&nbsp; Type Wine
       </button>
 
       <button
-        style={{ ...styles.btn, ...styles.btnCellar }}
-        onClick={() => setView("cellar")}
+        style={{ ...s.btn, background: "#b45309" }}
+        onClick={() => {
+          fetchCellar();
+          setView("cellar");
+        }}
       >
         🏠&nbsp; My Cellar
       </button>
