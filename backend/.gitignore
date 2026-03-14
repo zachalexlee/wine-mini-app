@@ -1,2 +1,7 @@
 node_modules/
 .env
+*.db
+*.db-wal
+*.db-shm
+cellar-data.json
+cellar-data.json.migrated
