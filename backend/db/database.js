@@ -1,91 +1,24 @@
 // ─────────────────────────────────────────────────────────────
-// SQLite Database — persistent cellar storage
+// Database layer — Supabase PostgreSQL
 // ─────────────────────────────────────────────────────────────
 
-const Database = require("better-sqlite3");
-const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "cellar.db");
-const db = new Database(DB_PATH);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-// Enable WAL mode for better concurrent read performance
-db.pragma("journal_mode = WAL");
-
-// ── Create tables ───────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS wines (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL,
-    wine        TEXT NOT NULL,
-    vintage     INTEGER,
-    region      TEXT,
-    grape       TEXT,
-    type        TEXT,
-    drink_from  INTEGER,
-    drink_to    INTEGER,
-    recommendation TEXT,
-    confidence  TEXT,
-    notes       TEXT DEFAULT '',
-    status      TEXT DEFAULT 'cellar',
-    saved_at    TEXT NOT NULL,
-    consumed_at TEXT
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error(
+    "⚠️  Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables"
   );
+}
 
-  CREATE INDEX IF NOT EXISTS idx_wines_user ON wines(user_id);
-  CREATE INDEX IF NOT EXISTS idx_wines_status ON wines(user_id, status);
-`);
+// Use the service_role key (not anon) so we bypass RLS from the backend
+const supabase = createClient(SUPABASE_URL || "", SUPABASE_SERVICE_KEY || "", {
+  auth: { persistSession: false },
+});
 
-// ── Prepared statements ─────────────────────────────────────
-
-const insertWine = db.prepare(`
-  INSERT INTO wines (id, user_id, wine, vintage, region, grape, type,
-                     drink_from, drink_to, recommendation, confidence,
-                     notes, status, saved_at)
-  VALUES (@id, @user_id, @wine, @vintage, @region, @grape, @type,
-          @drink_from, @drink_to, @recommendation, @confidence,
-          @notes, @status, @saved_at)
-`);
-
-const getWinesByUser = db.prepare(`
-  SELECT * FROM wines WHERE user_id = ? AND status = 'cellar'
-  ORDER BY saved_at DESC
-`);
-
-const getHistoryByUser = db.prepare(`
-  SELECT * FROM wines WHERE user_id = ? AND status = 'consumed'
-  ORDER BY consumed_at DESC
-`);
-
-const getWineById = db.prepare(`
-  SELECT * FROM wines WHERE id = ? AND user_id = ?
-`);
-
-const updateWine = db.prepare(`
-  UPDATE wines
-  SET wine = @wine, vintage = @vintage, region = @region,
-      grape = @grape, type = @type, drink_from = @drink_from,
-      drink_to = @drink_to, recommendation = @recommendation,
-      notes = @notes
-  WHERE id = @id AND user_id = @user_id
-`);
-
-const markConsumed = db.prepare(`
-  UPDATE wines SET status = 'consumed', consumed_at = ? WHERE id = ? AND user_id = ?
-`);
-
-const deleteWine = db.prepare(`
-  DELETE FROM wines WHERE id = ? AND user_id = ?
-`);
-
-const searchWines = db.prepare(`
-  SELECT * FROM wines
-  WHERE user_id = ? AND status = 'cellar'
-    AND (wine LIKE ? OR region LIKE ? OR grape LIKE ?)
-  ORDER BY saved_at DESC
-`);
-
-// ── Export helper functions ──────────────────────────────────
-
+// ── Helper: map DB row → API response format ────────────────
 function rowToWine(row) {
   return {
     id: row.id,
@@ -104,118 +37,155 @@ function rowToWine(row) {
   };
 }
 
-module.exports = {
-  // Save a wine to a user's cellar
-  addWine(userId, wine) {
-    const id = Date.now().toString() + Math.random().toString(36).slice(2, 6);
-    const now = new Date().toISOString();
-    insertWine.run({
-      id,
+// ── Get all active wines for a user ─────────────────────────
+async function getCellar(userId) {
+  const { data, error } = await supabase
+    .from("wines")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .order("saved_at", { ascending: false });
+
+  if (error) throw error;
+  return (data || []).map(rowToWine);
+}
+
+// ── Search wines by name, region, or grape ──────────────────
+async function searchCellar(userId, query) {
+  const q = `%${query}%`;
+  const { data, error } = await supabase
+    .from("wines")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .or(`wine.ilike.${q},region.ilike.${q},grape.ilike.${q}`)
+    .order("saved_at", { ascending: false });
+
+  if (error) throw error;
+  return (data || []).map(rowToWine);
+}
+
+// ── Add a wine to the cellar ────────────────────────────────
+async function addWine(userId, wine) {
+  const { data, error } = await supabase
+    .from("wines")
+    .insert({
       user_id: userId,
       wine: wine.wine || "",
-      vintage: wine.vintage || 0,
-      region: wine.region || "",
-      grape: wine.grape || "",
-      type: wine.type || "",
-      drink_from: wine.drinkWindow?.from || 0,
-      drink_to: wine.drinkWindow?.to || 0,
-      recommendation: wine.recommendation || "",
+      vintage: wine.vintage || null,
+      region: wine.region || null,
+      grape: wine.grape || null,
+      type: wine.type || null,
+      drink_from: wine.drinkWindow?.from || null,
+      drink_to: wine.drinkWindow?.to || null,
+      recommendation: wine.recommendation || null,
       confidence: wine.confidence || "low",
       notes: wine.notes || "",
-      status: "cellar",
-      saved_at: now,
-    });
-    return { id, savedAt: now };
-  },
+      status: "active",
+    })
+    .select()
+    .single();
 
-  // Get all wines in a user's cellar
-  getCellar(userId) {
-    return getWinesByUser.all(userId).map(rowToWine);
-  },
+  if (error) throw error;
+  return rowToWine(data);
+}
 
-  // Get consumption history
-  getHistory(userId) {
-    return getHistoryByUser.all(userId).map(rowToWine);
-  },
+// ── Get a single wine ───────────────────────────────────────
+async function getWine(userId, wineId) {
+  const { data, error } = await supabase
+    .from("wines")
+    .select("*")
+    .eq("id", wineId)
+    .eq("user_id", userId)
+    .single();
 
-  // Get a single wine
-  getWine(userId, wineId) {
-    const row = getWineById.get(wineId, userId);
-    return row ? rowToWine(row) : null;
-  },
+  if (error) return null;
+  return data ? rowToWine(data) : null;
+}
 
-  // Update a wine's details
-  updateWine(userId, wineId, updates) {
-    const existing = getWineById.get(wineId, userId);
-    if (!existing) return null;
+// ── Update a wine ───────────────────────────────────────────
+async function updateWine(userId, wineId, updates) {
+  const updateData = {
+    updated_at: new Date().toISOString(),
+  };
 
-    updateWine.run({
-      id: wineId,
-      user_id: userId,
-      wine: updates.wine ?? existing.wine,
-      vintage: updates.vintage ?? existing.vintage,
-      region: updates.region ?? existing.region,
-      grape: updates.grape ?? existing.grape,
-      type: updates.type ?? existing.type,
-      drink_from: updates.drinkWindow?.from ?? existing.drink_from,
-      drink_to: updates.drinkWindow?.to ?? existing.drink_to,
-      recommendation: updates.recommendation ?? existing.recommendation,
-      notes: updates.notes ?? existing.notes ?? "",
-    });
+  if (updates.wine !== undefined) updateData.wine = updates.wine;
+  if (updates.vintage !== undefined) updateData.vintage = updates.vintage;
+  if (updates.region !== undefined) updateData.region = updates.region;
+  if (updates.grape !== undefined) updateData.grape = updates.grape;
+  if (updates.type !== undefined) updateData.type = updates.type;
+  if (updates.notes !== undefined) updateData.notes = updates.notes;
+  if (updates.recommendation !== undefined)
+    updateData.recommendation = updates.recommendation;
+  if (updates.drinkWindow) {
+    if (updates.drinkWindow.from !== undefined)
+      updateData.drink_from = updates.drinkWindow.from;
+    if (updates.drinkWindow.to !== undefined)
+      updateData.drink_to = updates.drinkWindow.to;
+  }
 
-    const updated = getWineById.get(wineId, userId);
-    return updated ? rowToWine(updated) : null;
-  },
+  const { data, error } = await supabase
+    .from("wines")
+    .update(updateData)
+    .eq("id", wineId)
+    .eq("user_id", userId)
+    .select()
+    .single();
 
-  // Mark a wine as consumed (move to history)
-  consumeWine(userId, wineId) {
-    const existing = getWineById.get(wineId, userId);
-    if (!existing) return null;
-    markConsumed.run(new Date().toISOString(), wineId, userId);
-    const updated = getWineById.get(wineId, userId);
-    return updated ? rowToWine(updated) : null;
-  },
+  if (error) throw error;
+  return data ? rowToWine(data) : null;
+}
 
-  // Delete a wine permanently
-  deleteWine(userId, wineId) {
-    const result = deleteWine.run(wineId, userId);
-    return result.changes > 0;
-  },
+// ── Delete a wine ───────────────────────────────────────────
+async function deleteWine(userId, wineId) {
+  const { error } = await supabase
+    .from("wines")
+    .delete()
+    .eq("id", wineId)
+    .eq("user_id", userId);
 
-  // Search wines by name, region, or grape
-  searchCellar(userId, query) {
-    const pattern = `%${query}%`;
-    return searchWines.all(userId, pattern, pattern, pattern).map(rowToWine);
-  },
+  if (error) throw error;
+  return true;
+}
 
-  // Migrate from JSON file (one-time)
-  migrateFromJSON(jsonData) {
-    const insert = db.transaction((data) => {
-      for (const [userId, wines] of Object.entries(data)) {
-        for (const wine of wines) {
-          try {
-            insertWine.run({
-              id: wine.id || Date.now().toString(),
-              user_id: userId,
-              wine: wine.wine || "",
-              vintage: wine.vintage || 0,
-              region: wine.region || "",
-              grape: wine.grape || "",
-              type: wine.type || "",
-              drink_from: wine.drinkWindow?.from || 0,
-              drink_to: wine.drinkWindow?.to || 0,
-              recommendation: wine.recommendation || "",
-              confidence: wine.confidence || "low",
-              notes: "",
-              status: "cellar",
-              saved_at: wine.savedAt || new Date().toISOString(),
-            });
-          } catch {
-            // skip duplicates
-          }
-        }
-      }
-    });
-    insert(jsonData);
-  },
+// ── Mark a wine as consumed ─────────────────────────────────
+async function consumeWine(userId, wineId) {
+  const { data, error } = await supabase
+    .from("wines")
+    .update({
+      status: "consumed",
+      consumed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", wineId)
+    .eq("user_id", userId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data ? rowToWine(data) : null;
+}
+
+// ── Get consumption history ─────────────────────────────────
+async function getHistory(userId) {
+  const { data, error } = await supabase
+    .from("wines")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "consumed")
+    .order("consumed_at", { ascending: false });
+
+  if (error) throw error;
+  return (data || []).map(rowToWine);
+}
+
+module.exports = {
+  getCellar,
+  searchCellar,
+  addWine,
+  getWine,
+  updateWine,
+  deleteWine,
+  consumeWine,
+  getHistory,
 };

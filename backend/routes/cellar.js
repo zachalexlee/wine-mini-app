@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 // Routes: /api/cellar — full CRUD, search, edit, history
+// Now uses async/await for Supabase PostgreSQL
 // ─────────────────────────────────────────────────────────────
 
 const { Router } = require("express");
@@ -8,15 +9,15 @@ const db = require("../db/database");
 const router = Router();
 
 // ── POST /api/cellar — save a wine ─────────────────────────
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { userId, wine } = req.body;
     if (!userId || !wine) {
       return res.status(400).json({ error: "Missing userId or wine data." });
     }
 
-    const entry = db.addWine(userId, wine);
-    res.json({ success: true, entry: { ...wine, ...entry } });
+    const entry = await db.addWine(userId, wine);
+    res.json({ success: true, entry });
   } catch (err) {
     console.error("Cellar save error:", err.message);
     res.status(500).json({ error: "Failed to save wine." });
@@ -24,9 +25,9 @@ router.post("/", (req, res) => {
 });
 
 // ── GET /api/cellar/:userId — get user's cellar ─────────────
-router.get("/:userId", (req, res) => {
+router.get("/:userId", async (req, res) => {
   try {
-    const wines = db.getCellar(req.params.userId);
+    const wines = await db.getCellar(req.params.userId);
     res.json({ wines });
   } catch (err) {
     console.error("Cellar fetch error:", err.message);
@@ -35,14 +36,14 @@ router.get("/:userId", (req, res) => {
 });
 
 // ── GET /api/cellar/:userId/search?q=... — search cellar ────
-router.get("/:userId/search", (req, res) => {
+router.get("/:userId/search", async (req, res) => {
   try {
     const query = req.query.q || "";
     if (!query.trim()) {
-      const wines = db.getCellar(req.params.userId);
+      const wines = await db.getCellar(req.params.userId);
       return res.json({ wines });
     }
-    const wines = db.searchCellar(req.params.userId, query.trim());
+    const wines = await db.searchCellar(req.params.userId, query.trim());
     res.json({ wines });
   } catch (err) {
     console.error("Cellar search error:", err.message);
@@ -51,9 +52,9 @@ router.get("/:userId/search", (req, res) => {
 });
 
 // ── GET /api/cellar/:userId/history — consumption history ───
-router.get("/:userId/history", (req, res) => {
+router.get("/:userId/history", async (req, res) => {
   try {
-    const wines = db.getHistory(req.params.userId);
+    const wines = await db.getHistory(req.params.userId);
     res.json({ wines });
   } catch (err) {
     console.error("History fetch error:", err.message);
@@ -62,12 +63,12 @@ router.get("/:userId/history", (req, res) => {
 });
 
 // ── PUT /api/cellar/:userId/:wineId — edit a wine ──────────
-router.put("/:userId/:wineId", (req, res) => {
+router.put("/:userId/:wineId", async (req, res) => {
   try {
     const { userId, wineId } = req.params;
     const updates = req.body;
 
-    const updated = db.updateWine(userId, wineId, updates);
+    const updated = await db.updateWine(userId, wineId, updates);
     if (!updated) {
       return res.status(404).json({ error: "Wine not found." });
     }
@@ -79,10 +80,10 @@ router.put("/:userId/:wineId", (req, res) => {
 });
 
 // ── POST /api/cellar/:userId/:wineId/consume — mark consumed
-router.post("/:userId/:wineId/consume", (req, res) => {
+router.post("/:userId/:wineId/consume", async (req, res) => {
   try {
     const { userId, wineId } = req.params;
-    const consumed = db.consumeWine(userId, wineId);
+    const consumed = await db.consumeWine(userId, wineId);
     if (!consumed) {
       return res.status(404).json({ error: "Wine not found." });
     }
@@ -94,10 +95,10 @@ router.post("/:userId/:wineId/consume", (req, res) => {
 });
 
 // ── DELETE /api/cellar/:userId/:wineId — delete permanently ─
-router.delete("/:userId/:wineId", (req, res) => {
+router.delete("/:userId/:wineId", async (req, res) => {
   try {
     const { userId, wineId } = req.params;
-    const deleted = db.deleteWine(userId, wineId);
+    const deleted = await db.deleteWine(userId, wineId);
     if (!deleted) {
       return res.status(404).json({ error: "Wine not found." });
     }
