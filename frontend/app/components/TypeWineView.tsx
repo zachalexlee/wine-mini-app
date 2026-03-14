@@ -5,10 +5,10 @@ import {
   WineData,
   s,
   API_BASE,
-  getUserId,
   haptic,
   hapticNotification,
 } from "./shared";
+import { useAuth } from "./AuthProvider";
 import WineCard from "./WineCard";
 
 interface TypeWineViewProps {
@@ -16,6 +16,7 @@ interface TypeWineViewProps {
 }
 
 export default function TypeWineView({ onBack }: TypeWineViewProps) {
+  const { userId } = useAuth();
   const [wineName, setWineName] = useState("");
   const [vintageInput, setVintageInput] = useState("");
   const [lookupResult, setLookupResult] = useState<WineData | null>(null);
@@ -61,7 +62,7 @@ export default function TypeWineView({ onBack }: TypeWineViewProps) {
   const saveWine = async () => {
     if (!lookupResult) return;
     try {
-      const uid = getUserId();
+      const uid = userId;
       const res = await fetch(`${API_BASE}/api/cellar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

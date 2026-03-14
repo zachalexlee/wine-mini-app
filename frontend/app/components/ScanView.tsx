@@ -5,11 +5,11 @@ import {
   WineData,
   s,
   API_BASE,
-  getUserId,
   fileToBase64,
   haptic,
   hapticNotification,
 } from "./shared";
+import { useAuth } from "./AuthProvider";
 import WineCard from "./WineCard";
 
 interface ScanViewProps {
@@ -17,6 +17,7 @@ interface ScanViewProps {
 }
 
 export default function ScanView({ onBack }: ScanViewProps) {
+  const { userId } = useAuth();
   const [scanResult, setScanResult] = useState<WineData | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -155,7 +156,7 @@ export default function ScanView({ onBack }: ScanViewProps) {
   const saveWine = async () => {
     if (!scanResult) return;
     try {
-      const uid = getUserId();
+      const uid = userId;
       const res = await fetch(`${API_BASE}/api/cellar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

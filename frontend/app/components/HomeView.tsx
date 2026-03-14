@@ -1,12 +1,15 @@
 "use client";
 
 import { s, haptic } from "./shared";
+import { useAuth } from "./AuthProvider";
 
 interface HomeViewProps {
   onNavigate: (view: string) => void;
 }
 
 export default function HomeView({ onNavigate }: HomeViewProps) {
+  const { displayName, isTelegram, signOut } = useAuth();
+
   return (
     <div style={s.container}>
       <div style={s.header}>
@@ -15,6 +18,17 @@ export default function HomeView({ onNavigate }: HomeViewProps) {
         <p style={s.subtitle}>
           Scan a label &middot; Look up a vintage &middot; Track your cellar
         </p>
+        {displayName && (
+          <p
+            style={{
+              fontSize: 13,
+              opacity: 0.6,
+              margin: "8px 0 0",
+            }}
+          >
+            Welcome, {displayName}
+          </p>
+        )}
       </div>
 
       <button
@@ -46,6 +60,30 @@ export default function HomeView({ onNavigate }: HomeViewProps) {
       >
         My Cellar
       </button>
+
+      {!isTelegram && (
+        <button
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 16,
+            padding: "12px 20px",
+            background: "none",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: 12,
+            color: "#f5f0eb",
+            opacity: 0.6,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+          onClick={() => {
+            haptic("light");
+            signOut();
+          }}
+        >
+          Sign Out
+        </button>
+      )}
 
       <p
         style={{

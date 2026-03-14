@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { getTelegramWebApp } from "./components/shared";
+import AuthProvider, { useAuth } from "./components/AuthProvider";
 import HomeView from "./components/HomeView";
 import ScanView from "./components/ScanView";
 import TypeWineView from "./components/TypeWineView";
 import CellarView from "./components/CellarView";
 
-export default function Home() {
+function AppContent() {
   const [view, setView] = useState("home");
+  const auth = useAuth();
 
   // Notify Telegram that the Mini App is ready
   useEffect(() => {
@@ -33,4 +35,12 @@ export default function Home() {
     default:
       return <HomeView onNavigate={setView} />;
   }
+}
+
+export default function Home() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
 }

@@ -5,11 +5,11 @@ import {
   CellarEntry,
   s,
   API_BASE,
-  getUserId,
   getDrinkStatus,
   haptic,
   hapticNotification,
 } from "./shared";
+import { useAuth } from "./AuthProvider";
 
 interface CellarViewProps {
   onBack: () => void;
@@ -19,6 +19,7 @@ type SortBy = "saved" | "name" | "vintage" | "drink";
 type SubView = "list" | "detail" | "edit" | "history";
 
 export default function CellarView({ onBack }: CellarViewProps) {
+  const { userId } = useAuth();
   const [cellar, setCellar] = useState<CellarEntry[]>([]);
   const [history, setHistory] = useState<CellarEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,10 +46,9 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const fetchCellar = useCallback(async () => {
     setLoading(true);
     try {
-      const uid = getUserId();
       const url = searchQuery.trim()
-        ? `${API_BASE}/api/cellar/${uid}/search?q=${encodeURIComponent(searchQuery.trim())}`
-        : `${API_BASE}/api/cellar/${uid}`;
+        ? `${API_BASE}/api/cellar/${userId}/search?q=${encodeURIComponent(searchQuery.trim())}`
+        : `${API_BASE}/api/cellar/${userId}`;
       const res = await fetch(url);
       const data = await res.json();
       setCellar(data.wines || []);
@@ -61,8 +61,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const uid = getUserId();
-      const res = await fetch(`${API_BASE}/api/cellar/${uid}/history`);
+      const res = await fetch(`${API_BASE}/api/cellar/${userId}/history`);
       const data = await res.json();
       setHistory(data.wines || []);
     } catch {
@@ -92,8 +91,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const deleteWine = async (wineId: string) => {
     haptic("medium");
     try {
-      const uid = getUserId();
-      await fetch(`${API_BASE}/api/cellar/${uid}/${wineId}`, {
+      await fetch(`${API_BASE}/api/cellar/${userId}/${wineId}`, {
         method: "DELETE",
       });
       setCellar((prev) => prev.filter((w) => w.id !== wineId));
@@ -107,9 +105,8 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const consumeWine = async (wineId: string) => {
     haptic("medium");
     try {
-      const uid = getUserId();
       const res = await fetch(
-        `${API_BASE}/api/cellar/${uid}/${wineId}/consume`,
+        `${API_BASE}/api/cellar/${userId}/${wineId}/consume`,
         { method: "POST" }
       );
       const data = await res.json();
@@ -129,7 +126,6 @@ export default function CellarView({ onBack }: CellarViewProps) {
     if (!selectedWine) return;
     haptic("light");
     try {
-      const uid = getUserId();
       const updates = {
         wine: editForm.wine,
         vintage: parseInt(editForm.vintage) || selectedWine.vintage,
@@ -144,7 +140,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
       };
 
       const res = await fetch(
-        `${API_BASE}/api/cellar/${uid}/${selectedWine.id}`,
+        `${API_BASE}/api/cellar/${userId}/${selectedWine.id}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

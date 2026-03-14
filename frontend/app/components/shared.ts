@@ -48,7 +48,9 @@ export function haptic(type: "light" | "medium" | "heavy" = "light") {
   }
 }
 
-export function hapticNotification(type: "success" | "warning" | "error" = "success") {
+export function hapticNotification(
+  type: "success" | "warning" | "error" = "success"
+) {
   try {
     const tg = getTelegramWebApp();
     if (tg?.HapticFeedback) {
@@ -80,7 +82,7 @@ export function safeSetItem(key: string, value: string): void {
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://wine-mini-app.vercel.app";
 
-// ── User ID ──────────────────────────────────────────────────
+// ── User ID (legacy fallback — prefer useAuth().userId) ─────
 export function getUserId(): string {
   const tg = getTelegramWebApp();
   try {
