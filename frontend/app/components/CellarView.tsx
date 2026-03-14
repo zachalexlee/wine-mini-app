@@ -15,7 +15,7 @@ interface CellarViewProps {
   onBack: () => void;
 }
 
-type SortBy = "saved" | "name" | "vintage" | "drink";
+type SortBy = "saved" | "name" | "winery" | "vintage" | "drink";
 type SubView = "list" | "detail" | "edit" | "history";
 
 export default function CellarView({ onBack }: CellarViewProps) {
@@ -33,6 +33,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
   // Edit form
   const [editForm, setEditForm] = useState({
     wine: "",
+    winery: "",
     vintage: "",
     region: "",
     grape: "",
@@ -78,6 +79,8 @@ export default function CellarView({ onBack }: CellarViewProps) {
     switch (sortBy) {
       case "name":
         return a.wine.localeCompare(b.wine);
+      case "winery":
+        return (a.winery || "").localeCompare(b.winery || "");
       case "vintage":
         return (b.vintage || 0) - (a.vintage || 0);
       case "drink":
@@ -128,6 +131,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
     try {
       const updates = {
         wine: editForm.wine,
+        winery: editForm.winery,
         vintage: parseInt(editForm.vintage) || selectedWine.vintage,
         region: editForm.region,
         grape: editForm.grape,
@@ -165,6 +169,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const openEdit = (wine: CellarEntry) => {
     setEditForm({
       wine: wine.wine,
+      winery: wine.winery || "",
       vintage: String(wine.vintage || ""),
       region: wine.region || "",
       grape: wine.grape || "",
@@ -209,6 +214,13 @@ export default function CellarView({ onBack }: CellarViewProps) {
             style={s.input}
             value={editForm.wine}
             onChange={(e) => setEditForm({ ...editForm, wine: e.target.value })}
+          />
+
+          <label style={{ fontSize: 12, opacity: 0.6, marginBottom: 4, display: "block" }}>Winery / Producer</label>
+          <input
+            style={s.input}
+            value={editForm.winery}
+            onChange={(e) => setEditForm({ ...editForm, winery: e.target.value })}
           />
 
           <label style={{ fontSize: 12, opacity: 0.6, marginBottom: 4, display: "block" }}>Vintage</label>
@@ -330,6 +342,11 @@ export default function CellarView({ onBack }: CellarViewProps) {
           <p style={{ margin: "4px 0", opacity: 0.8 }}>
             {selectedWine.type} &middot; {selectedWine.vintage}
           </p>
+          {selectedWine.winery && (
+            <p style={{ margin: "4px 0" }}>
+              <strong>Winery:</strong> {selectedWine.winery}
+            </p>
+          )}
           <p style={{ margin: "4px 0" }}>
             <strong>Region:</strong> {selectedWine.region}
           </p>
@@ -496,7 +513,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
       <div style={{ marginBottom: 12 }}>
         <input
           style={s.input}
-          placeholder="Search by name, region, or grape..."
+          placeholder="Search by name, winery, region, or grape..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -540,6 +557,12 @@ export default function CellarView({ onBack }: CellarViewProps) {
           onClick={() => setSortBy("name")}
         >
           Name
+        </button>
+        <button
+          style={sortBtnStyle(sortBy === "winery")}
+          onClick={() => setSortBy("winery")}
+        >
+          Winery
         </button>
         <button
           style={sortBtnStyle(sortBy === "vintage")}
@@ -616,7 +639,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
                   {entry.wine}
                 </h3>
                 <p style={{ margin: "2px 0", opacity: 0.7, fontSize: 13 }}>
-                  {entry.type} &middot; {entry.vintage} &middot; {entry.region}
+                  {entry.winery ? `${entry.winery} \u00B7 ` : ""}{entry.type} &middot; {entry.vintage} &middot; {entry.region}
                 </p>
               </div>
               <button

@@ -11,6 +11,7 @@ You will analyze wine information and return ONLY a valid JSON object (no markdo
 
 {
   "wine": "Full wine name including producer",
+  "winery": "Name of the winery / producer / estate (e.g. Château Margaux, Opus One, Penfolds)",
   "vintage": 2020,
   "region": "Region, Sub-region, Country",
   "grape": "Primary grape variety or blend description",

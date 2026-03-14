@@ -23,6 +23,7 @@ function rowToWine(row) {
   return {
     id: row.id,
     wine: row.wine,
+    winery: row.winery || "",
     vintage: row.vintage,
     region: row.region,
     grape: row.grape,
@@ -58,7 +59,7 @@ async function searchCellar(userId, query) {
     .select("*")
     .eq("user_id", userId)
     .eq("status", "active")
-    .or(`wine.ilike.${q},region.ilike.${q},grape.ilike.${q}`)
+    .or(`wine.ilike.${q},winery.ilike.${q},region.ilike.${q},grape.ilike.${q}`)
     .order("saved_at", { ascending: false });
 
   if (error) throw error;
@@ -72,6 +73,7 @@ async function addWine(userId, wine) {
     .insert({
       user_id: userId,
       wine: wine.wine || "",
+      winery: wine.winery || null,
       vintage: wine.vintage || null,
       region: wine.region || null,
       grape: wine.grape || null,
@@ -110,6 +112,7 @@ async function updateWine(userId, wineId, updates) {
   };
 
   if (updates.wine !== undefined) updateData.wine = updates.wine;
+  if (updates.winery !== undefined) updateData.winery = updates.winery;
   if (updates.vintage !== undefined) updateData.vintage = updates.vintage;
   if (updates.region !== undefined) updateData.region = updates.region;
   if (updates.grape !== undefined) updateData.grape = updates.grape;

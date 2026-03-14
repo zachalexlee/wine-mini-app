@@ -21,6 +21,11 @@ export default function WineCard({ wine, onSave, isSaved }: WineCardProps) {
         <p style={{ margin: "4px 0", opacity: 0.8 }}>
           {wine.type} &middot; {wine.vintage}
         </p>
+        {wine.winery && (
+          <p style={{ margin: "4px 0" }}>
+            <strong>Winery:</strong> {wine.winery}
+          </p>
+        )}
         <p style={{ margin: "4px 0" }}>
           <strong>Region:</strong> {wine.region}
         </p>

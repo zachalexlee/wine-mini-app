@@ -7,6 +7,7 @@ import React from "react";
 // ── Types ────────────────────────────────────────────────────
 export interface WineData {
   wine: string;
+  winery: string;
   vintage: number;
   region: string;
   grape: string;
