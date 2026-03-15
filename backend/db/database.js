@@ -35,6 +35,12 @@ function rowToWine(row) {
     status: row.status,
     savedAt: row.saved_at,
     consumedAt: row.consumed_at,
+    // New detailed fields
+    tasting: row.tasting || null,
+    pairing: row.pairing || "",
+    serving: row.serving || null,
+    agingPotential: row.aging_potential || "",
+    imageUrl: row.image_url || "",
   };
 }
 
@@ -84,6 +90,12 @@ async function addWine(userId, wine) {
       confidence: wine.confidence || "low",
       notes: wine.notes || "",
       status: "active",
+      // New detailed fields
+      tasting: wine.tasting || null,
+      pairing: wine.pairing || null,
+      serving: wine.serving || null,
+      aging_potential: wine.agingPotential || null,
+      image_url: wine.imageUrl || null,
     })
     .select()
     .single();
@@ -126,6 +138,13 @@ async function updateWine(userId, wineId, updates) {
     if (updates.drinkWindow.to !== undefined)
       updateData.drink_to = updates.drinkWindow.to;
   }
+  // New detailed fields
+  if (updates.tasting !== undefined) updateData.tasting = updates.tasting;
+  if (updates.pairing !== undefined) updateData.pairing = updates.pairing;
+  if (updates.serving !== undefined) updateData.serving = updates.serving;
+  if (updates.agingPotential !== undefined)
+    updateData.aging_potential = updates.agingPotential;
+  if (updates.imageUrl !== undefined) updateData.image_url = updates.imageUrl;
 
   const { data, error } = await supabase
     .from("wines")

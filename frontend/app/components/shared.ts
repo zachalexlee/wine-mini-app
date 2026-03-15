@@ -5,6 +5,18 @@
 import React from "react";
 
 // ── Types ────────────────────────────────────────────────────
+export interface TastingNotes {
+  aroma: string;
+  palate: string;
+  finish: string;
+}
+
+export interface ServingInfo {
+  temperature: string;
+  decanting: string;
+  glassware: string;
+}
+
 export interface WineData {
   wine: string;
   winery: string;
@@ -17,6 +29,11 @@ export interface WineData {
   confidence: string;
   notes?: string;
   error?: string;
+  // Expanded detail fields
+  tasting?: TastingNotes;
+  pairing?: string;
+  serving?: ServingInfo;
+  agingPotential?: string;
 }
 
 export interface CellarEntry extends WineData {
@@ -227,4 +244,18 @@ export const s = {
     marginBottom: 12,
     border: "1px solid rgba(255,255,255,0.08)",
   },
+  // Styles for detail sections
+  sectionTitle: {
+    margin: "0 0 8px",
+    fontSize: 12,
+    fontWeight: 700,
+    opacity: 0.5,
+    textTransform: "uppercase" as const,
+    letterSpacing: 1.2,
+  } as React.CSSProperties,
+  sectionContent: {
+    margin: 0,
+    lineHeight: 1.6,
+    fontSize: 14,
+  } as React.CSSProperties,
 };

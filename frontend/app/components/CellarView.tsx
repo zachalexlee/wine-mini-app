@@ -386,6 +386,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
           &larr; Back to Cellar
         </button>
 
+        {/* Basic info */}
         <div style={s.card}>
           <div
             style={{ display: "flex", alignItems: "center", marginBottom: 8 }}
@@ -412,6 +413,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
           </p>
         </div>
 
+        {/* Drink window */}
         {hasDrinkWindow ? (
           <div style={s.drinkWindow}>
             <p style={{ margin: "0 0 4px", fontSize: 13, opacity: 0.7 }}>
@@ -442,35 +444,99 @@ export default function CellarView({ onBack }: CellarViewProps) {
           </div>
         )}
 
-        <div style={s.card}>
-          <p
-            style={{
-              margin: "0 0 4px",
-              fontSize: 13,
-              fontWeight: 600,
-              opacity: 0.7,
-            }}
-          >
-            SOMMELIER NOTES
-          </p>
-          <p style={{ margin: 0, lineHeight: 1.6 }}>
-            {selectedWine.recommendation}
-          </p>
-        </div>
+        {/* Tasting notes */}
+        {selectedWine.tasting && (
+          <div style={s.card}>
+            <p style={s.sectionTitle}>Tasting Notes</p>
+            {selectedWine.tasting.aroma && (
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                  Aroma / Nose
+                </p>
+                <p style={s.sectionContent}>{selectedWine.tasting.aroma}</p>
+              </div>
+            )}
+            {selectedWine.tasting.palate && (
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                  Palate
+                </p>
+                <p style={s.sectionContent}>{selectedWine.tasting.palate}</p>
+              </div>
+            )}
+            {selectedWine.tasting.finish && (
+              <div>
+                <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                  Finish
+                </p>
+                <p style={s.sectionContent}>{selectedWine.tasting.finish}</p>
+              </div>
+            )}
+          </div>
+        )}
 
+        {/* Food pairings */}
+        {selectedWine.pairing && (
+          <div style={s.card}>
+            <p style={s.sectionTitle}>Food Pairings</p>
+            <p style={s.sectionContent}>{selectedWine.pairing}</p>
+          </div>
+        )}
+
+        {/* Serving recommendations */}
+        {selectedWine.serving && (
+          <div style={s.card}>
+            <p style={s.sectionTitle}>Serving</p>
+            <div style={{ display: "grid", gap: 10 }}>
+              {selectedWine.serving.temperature && (
+                <div>
+                  <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                    Temperature
+                  </p>
+                  <p style={s.sectionContent}>{selectedWine.serving.temperature}</p>
+                </div>
+              )}
+              {selectedWine.serving.decanting && (
+                <div>
+                  <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                    Decanting
+                  </p>
+                  <p style={s.sectionContent}>{selectedWine.serving.decanting}</p>
+                </div>
+              )}
+              {selectedWine.serving.glassware && (
+                <div>
+                  <p style={{ margin: "0 0 2px", fontSize: 12, fontWeight: 600, color: "#c4b5fd" }}>
+                    Glassware
+                  </p>
+                  <p style={s.sectionContent}>{selectedWine.serving.glassware}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Aging potential */}
+        {selectedWine.agingPotential && (
+          <div style={s.card}>
+            <p style={s.sectionTitle}>Aging Potential</p>
+            <p style={s.sectionContent}>{selectedWine.agingPotential}</p>
+          </div>
+        )}
+
+        {/* Sommelier recommendation */}
+        {selectedWine.recommendation && (
+          <div style={s.card}>
+            <p style={s.sectionTitle}>Sommelier Recommendation</p>
+            <p style={s.sectionContent}>{selectedWine.recommendation}</p>
+          </div>
+        )}
+
+        {/* Personal notes */}
         {selectedWine.notes && (
           <div style={s.card}>
-            <p
-              style={{
-                margin: "0 0 4px",
-                fontSize: 13,
-                fontWeight: 600,
-                opacity: 0.7,
-              }}
-            >
-              YOUR NOTES
-            </p>
-            <p style={{ margin: 0, lineHeight: 1.6, fontStyle: "italic" }}>
+            <p style={s.sectionTitle}>Your Notes</p>
+            <p style={{ ...s.sectionContent, fontStyle: "italic" }}>
               {selectedWine.notes}
             </p>
           </div>

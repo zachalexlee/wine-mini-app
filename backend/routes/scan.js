@@ -17,8 +17,10 @@ router.post("/scan", async (req, res) => {
         .json({ error: "Missing 'image' field. Send a base64-encoded image." });
     }
 
-    const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-    const wineData = await analyzeImage(base64Data);
+    const wineData = await analyzeImage(
+      image.replace(/^data:image\/\w+;base64,/, "")
+    );
+
     res.json(wineData);
   } catch (err) {
     console.error("Scan error:", err.message);
