@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CellarEntry,
   s,
@@ -30,6 +30,9 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("saved");
 
+  // Debounce ref
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Edit form
   const [editForm, setEditForm] = useState({
     wine: "",
@@ -44,21 +47,25 @@ export default function CellarView({ onBack }: CellarViewProps) {
   });
 
   // ── Fetch cellar ──────────────────────────────────────────
-  const fetchCellar = useCallback(async () => {
-    setLoading(true);
-    try {
-      const url = searchQuery.trim()
-        ? `${API_BASE}/api/cellar/${userId}/search?q=${encodeURIComponent(searchQuery.trim())}`
-        : `${API_BASE}/api/cellar/${userId}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      setCellar(data.wines || []);
-    } catch {
-      setCellar([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [searchQuery]);
+  const fetchCellar = useCallback(
+    async (query?: string) => {
+      setLoading(true);
+      try {
+        const q = (query !== undefined ? query : searchQuery).trim();
+        const url = q
+          ? `${API_BASE}/api/cellar/${userId}/search?q=${encodeURIComponent(q)}`
+          : `${API_BASE}/api/cellar/${userId}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        setCellar(data.wines || []);
+      } catch {
+        setCellar([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [userId]
+  );
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -68,25 +75,53 @@ export default function CellarView({ onBack }: CellarViewProps) {
     } catch {
       setHistory([]);
     }
-  }, []);
+  }, [userId]);
 
+  // Initial load
   useEffect(() => {
-    fetchCellar();
+    fetchCellar("");
   }, [fetchCellar]);
+
+  // Debounced search: triggers 400ms after user stops typing
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchCellar(searchQuery);
+    }, 400);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchQuery, fetchCellar]);
 
   // ── Sort logic ────────────────────────────────────────────
   const sortedCellar = [...cellar].sort((a, b) => {
     switch (sortBy) {
       case "name":
-        return a.wine.localeCompare(b.wine);
+        return (a.wine || "").localeCompare(b.wine || "");
       case "winery":
-        return (a.winery || "").localeCompare(b.winery || "");
-      case "vintage":
-        return (b.vintage || 0) - (a.vintage || 0);
-      case "drink":
-        return (a.drinkWindow?.from || 0) - (b.drinkWindow?.from || 0);
+        return (a.winery || "zzz").localeCompare(b.winery || "zzz");
+      case "vintage": {
+        // Wines with vintage sort newest first; wines without vintage go to the end
+        const aV = a.vintage || 0;
+        const bV = b.vintage || 0;
+        if (aV === 0 && bV === 0) return 0;
+        if (aV === 0) return 1; // a has no vintage, push to end
+        if (bV === 0) return -1; // b has no vintage, push to end
+        return bV - aV; // newest first
+      }
+      case "drink": {
+        // Sort by drink window start; wines without drink window go to the end
+        const aD = a.drinkWindow?.from || 0;
+        const bD = b.drinkWindow?.from || 0;
+        if (aD === 0 && bD === 0) return 0;
+        if (aD === 0) return 1; // a has no drink window, push to end
+        if (bD === 0) return -1; // b has no drink window, push to end
+        return aD - bD; // earliest drink window first
+      }
       default:
-        return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
+        return (
+          new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime()
+        );
     }
   });
 
@@ -312,10 +347,11 @@ export default function CellarView({ onBack }: CellarViewProps) {
 
   // ── DETAIL VIEW ───────────────────────────────────────────
   if (subView === "detail" && selectedWine) {
-    const status = getDrinkStatus(
-      selectedWine.drinkWindow.from,
-      selectedWine.drinkWindow.to
-    );
+    const hasDrinkWindow =
+      selectedWine.drinkWindow?.from && selectedWine.drinkWindow?.to;
+    const status = hasDrinkWindow
+      ? getDrinkStatus(selectedWine.drinkWindow.from, selectedWine.drinkWindow.to)
+      : null;
 
     return (
       <div style={s.container}>
@@ -340,7 +376,8 @@ export default function CellarView({ onBack }: CellarViewProps) {
             </span>
           </div>
           <p style={{ margin: "4px 0", opacity: 0.8 }}>
-            {selectedWine.type} &middot; {selectedWine.vintage}
+            {selectedWine.type}
+            {selectedWine.vintage ? ` \u00B7 ${selectedWine.vintage}` : ""}
           </p>
           {selectedWine.winery && (
             <p style={{ margin: "4px 0" }}>
@@ -355,25 +392,35 @@ export default function CellarView({ onBack }: CellarViewProps) {
           </p>
         </div>
 
-        <div style={s.drinkWindow}>
-          <p style={{ margin: "0 0 4px", fontSize: 13, opacity: 0.7 }}>
-            OPTIMAL DRINKING WINDOW
-          </p>
-          <p style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
-            {selectedWine.drinkWindow.from} &ndash;{" "}
-            {selectedWine.drinkWindow.to}
-          </p>
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 14,
-              fontWeight: 600,
-              color: status.color,
-            }}
-          >
-            {status.label}
-          </p>
-        </div>
+        {hasDrinkWindow ? (
+          <div style={s.drinkWindow}>
+            <p style={{ margin: "0 0 4px", fontSize: 13, opacity: 0.7 }}>
+              OPTIMAL DRINKING WINDOW
+            </p>
+            <p style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
+              {selectedWine.drinkWindow.from} &ndash;{" "}
+              {selectedWine.drinkWindow.to}
+            </p>
+            {status && (
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: status.color,
+                }}
+              >
+                {status.label}
+              </p>
+            )}
+          </div>
+        ) : (
+          <div style={s.drinkWindow}>
+            <p style={{ margin: 0, fontSize: 13, opacity: 0.7 }}>
+              No drinking window set. Tap &quot;Edit Details&quot; to add one.
+            </p>
+          </div>
+        )}
 
         <div style={s.card}>
           <p
@@ -481,7 +528,10 @@ export default function CellarView({ onBack }: CellarViewProps) {
           <div key={entry.id} style={s.cellarItem}>
             <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>{entry.wine}</h3>
             <p style={{ margin: "2px 0", opacity: 0.7, fontSize: 13 }}>
-              {entry.type} &middot; {entry.vintage} &middot; {entry.region}
+              {entry.winery ? `${entry.winery} \u00B7 ` : ""}
+              {entry.type}
+              {entry.vintage ? ` \u00B7 ${entry.vintage}` : ""}
+              {entry.region ? ` \u00B7 ${entry.region}` : ""}
             </p>
             {entry.consumedAt && (
               <p style={{ margin: "8px 0 0", fontSize: 12, opacity: 0.5 }}>
@@ -516,9 +566,6 @@ export default function CellarView({ onBack }: CellarViewProps) {
           placeholder="Search by name, winery, region, or grape..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") fetchCellar();
-          }}
         />
         {searchQuery && (
           <button
@@ -548,31 +595,31 @@ export default function CellarView({ onBack }: CellarViewProps) {
       >
         <button
           style={sortBtnStyle(sortBy === "saved")}
-          onClick={() => setSortBy("saved")}
+          onClick={() => { haptic("light"); setSortBy("saved"); }}
         >
           Recent
         </button>
         <button
           style={sortBtnStyle(sortBy === "name")}
-          onClick={() => setSortBy("name")}
+          onClick={() => { haptic("light"); setSortBy("name"); }}
         >
           Name
         </button>
         <button
           style={sortBtnStyle(sortBy === "winery")}
-          onClick={() => setSortBy("winery")}
+          onClick={() => { haptic("light"); setSortBy("winery"); }}
         >
           Winery
         </button>
         <button
           style={sortBtnStyle(sortBy === "vintage")}
-          onClick={() => setSortBy("vintage")}
+          onClick={() => { haptic("light"); setSortBy("vintage"); }}
         >
           Vintage
         </button>
         <button
           style={sortBtnStyle(sortBy === "drink")}
-          onClick={() => setSortBy("drink")}
+          onClick={() => { haptic("light"); setSortBy("drink"); }}
         >
           Drink Window
         </button>
@@ -618,10 +665,10 @@ export default function CellarView({ onBack }: CellarViewProps) {
 
       {/* Wine list */}
       {sortedCellar.map((entry) => {
-        const status = getDrinkStatus(
-          entry.drinkWindow.from,
-          entry.drinkWindow.to
-        );
+        const hasDrinkWindow = entry.drinkWindow?.from && entry.drinkWindow?.to;
+        const status = hasDrinkWindow
+          ? getDrinkStatus(entry.drinkWindow.from, entry.drinkWindow.to)
+          : null;
 
         return (
           <div
@@ -639,7 +686,10 @@ export default function CellarView({ onBack }: CellarViewProps) {
                   {entry.wine}
                 </h3>
                 <p style={{ margin: "2px 0", opacity: 0.7, fontSize: 13 }}>
-                  {entry.winery ? `${entry.winery} \u00B7 ` : ""}{entry.type} &middot; {entry.vintage} &middot; {entry.region}
+                  {entry.winery ? `${entry.winery} \u00B7 ` : ""}
+                  {entry.type}
+                  {entry.vintage ? ` \u00B7 ${entry.vintage}` : ""}
+                  {entry.region ? ` \u00B7 ${entry.region}` : ""}
                 </p>
               </div>
               <button
@@ -660,30 +710,47 @@ export default function CellarView({ onBack }: CellarViewProps) {
                 &times;
               </button>
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: 8,
-                padding: "8px 12px",
-                background: "rgba(255,255,255,0.05)",
-                borderRadius: 8,
-              }}
-            >
-              <span style={{ fontSize: 13 }}>
-                Drink: {entry.drinkWindow.from}&ndash;{entry.drinkWindow.to}
-              </span>
-              <span
+            {hasDrinkWindow ? (
+              <div
                 style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: status.color,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  background: "rgba(255,255,255,0.05)",
+                  borderRadius: 8,
                 }}
               >
-                {status.label}
-              </span>
-            </div>
+                <span style={{ fontSize: 13 }}>
+                  Drink: {entry.drinkWindow.from}&ndash;{entry.drinkWindow.to}
+                </span>
+                {status && (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: status.color,
+                    }}
+                  >
+                    {status.label}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  background: "rgba(255,255,255,0.05)",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  opacity: 0.5,
+                }}
+              >
+                No drinking window set
+              </div>
+            )}
             <p
               style={{
                 margin: "8px 0 0",
