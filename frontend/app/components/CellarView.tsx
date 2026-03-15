@@ -15,7 +15,7 @@ interface CellarViewProps {
   onBack: () => void;
 }
 
-type SortBy = "saved" | "name" | "winery" | "vintage" | "drink";
+type SortBy = "saved" | "name" | "vintage" | "drink";
 type SubView = "list" | "detail" | "edit" | "history";
 
 export default function CellarView({ onBack }: CellarViewProps) {
@@ -26,9 +26,11 @@ export default function CellarView({ onBack }: CellarViewProps) {
   const [subView, setSubView] = useState<SubView>("list");
   const [selectedWine, setSelectedWine] = useState<CellarEntry | null>(null);
 
-  // Search & sort
+  // Search & sort & filter
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortBy>("saved");
+  const [wineryFilter, setWineryFilter] = useState<string | null>(null);
+  const [showWineryPicker, setShowWineryPicker] = useState(false);
 
   // Debounce ref
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -93,30 +95,37 @@ export default function CellarView({ onBack }: CellarViewProps) {
     };
   }, [searchQuery, fetchCellar]);
 
-  // ── Sort logic ────────────────────────────────────────────
-  const sortedCellar = [...cellar].sort((a, b) => {
+  // ── Unique wineries for the filter picker ─────────────────
+  const uniqueWineries = Array.from(
+    new Set(cellar.map((w) => w.winery).filter((w) => w && w.trim() !== ""))
+  ).sort((a, b) => a.localeCompare(b));
+
+  // ── Filter by winery, then sort ───────────────────────────
+  const filteredCellar = wineryFilter
+    ? cellar.filter(
+        (w) => w.winery && w.winery.toLowerCase() === wineryFilter.toLowerCase()
+      )
+    : cellar;
+
+  const sortedCellar = [...filteredCellar].sort((a, b) => {
     switch (sortBy) {
       case "name":
         return (a.wine || "").localeCompare(b.wine || "");
-      case "winery":
-        return (a.winery || "zzz").localeCompare(b.winery || "zzz");
       case "vintage": {
-        // Wines with vintage sort newest first; wines without vintage go to the end
         const aV = a.vintage || 0;
         const bV = b.vintage || 0;
         if (aV === 0 && bV === 0) return 0;
-        if (aV === 0) return 1; // a has no vintage, push to end
-        if (bV === 0) return -1; // b has no vintage, push to end
-        return bV - aV; // newest first
+        if (aV === 0) return 1;
+        if (bV === 0) return -1;
+        return bV - aV;
       }
       case "drink": {
-        // Sort by drink window start; wines without drink window go to the end
         const aD = a.drinkWindow?.from || 0;
         const bD = b.drinkWindow?.from || 0;
         if (aD === 0 && bD === 0) return 0;
-        if (aD === 0) return 1; // a has no drink window, push to end
-        if (bD === 0) return -1; // b has no drink window, push to end
-        return aD - bD; // earliest drink window first
+        if (aD === 0) return 1;
+        if (bD === 0) return -1;
+        return aD - bD;
       }
       default:
         return (
@@ -216,7 +225,7 @@ export default function CellarView({ onBack }: CellarViewProps) {
     setSubView("edit");
   };
 
-  // ── Sort button style ────────────────────────────────────
+  // ── Button styles ─────────────────────────────────────────
   const sortBtnStyle = (active: boolean) => ({
     padding: "6px 12px",
     borderRadius: 8,
@@ -226,6 +235,17 @@ export default function CellarView({ onBack }: CellarViewProps) {
     cursor: "pointer",
     background: active ? "#7c3aed" : "rgba(255,255,255,0.1)",
     color: active ? "#fff" : "rgba(255,255,255,0.6)",
+  });
+
+  const filterBtnStyle = (active: boolean) => ({
+    padding: "6px 12px",
+    borderRadius: 8,
+    border: active ? "1px solid #7c3aed" : "1px solid rgba(255,255,255,0.15)",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    background: active ? "rgba(124,58,237,0.25)" : "rgba(255,255,255,0.05)",
+    color: active ? "#c4b5fd" : "rgba(255,255,255,0.6)",
   });
 
   // ── EDIT VIEW ─────────────────────────────────────────────
@@ -438,7 +458,6 @@ export default function CellarView({ onBack }: CellarViewProps) {
           </p>
         </div>
 
-        {/* Personal notes */}
         {selectedWine.notes && (
           <div style={s.card}>
             <p
@@ -468,7 +487,6 @@ export default function CellarView({ onBack }: CellarViewProps) {
           Saved on {new Date(selectedWine.savedAt).toLocaleDateString()}
         </p>
 
-        {/* Action buttons */}
         <button
           style={s.actionBtn("#6d28d9")}
           onClick={() => {
@@ -584,45 +602,86 @@ export default function CellarView({ onBack }: CellarViewProps) {
         )}
       </div>
 
-      {/* Sort buttons */}
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          marginBottom: 16,
-          flexWrap: "wrap",
-        }}
-      >
-        <button
-          style={sortBtnStyle(sortBy === "saved")}
-          onClick={() => { haptic("light"); setSortBy("saved"); }}
+      {/* Sort buttons row */}
+      <div style={{ marginBottom: 8 }}>
+        <p style={{ margin: "0 0 6px", fontSize: 11, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1 }}>
+          Sort by
+        </p>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
         >
-          Recent
-        </button>
-        <button
-          style={sortBtnStyle(sortBy === "name")}
-          onClick={() => { haptic("light"); setSortBy("name"); }}
-        >
-          Name
-        </button>
-        <button
-          style={sortBtnStyle(sortBy === "winery")}
-          onClick={() => { haptic("light"); setSortBy("winery"); }}
-        >
-          Winery
-        </button>
-        <button
-          style={sortBtnStyle(sortBy === "vintage")}
-          onClick={() => { haptic("light"); setSortBy("vintage"); }}
-        >
-          Vintage
-        </button>
-        <button
-          style={sortBtnStyle(sortBy === "drink")}
-          onClick={() => { haptic("light"); setSortBy("drink"); }}
-        >
-          Drink Window
-        </button>
+          <button
+            style={sortBtnStyle(sortBy === "saved")}
+            onClick={() => { haptic("light"); setSortBy("saved"); }}
+          >
+            Recent
+          </button>
+          <button
+            style={sortBtnStyle(sortBy === "name")}
+            onClick={() => { haptic("light"); setSortBy("name"); }}
+          >
+            Name
+          </button>
+          <button
+            style={sortBtnStyle(sortBy === "vintage")}
+            onClick={() => { haptic("light"); setSortBy("vintage"); }}
+          >
+            Vintage
+          </button>
+          <button
+            style={sortBtnStyle(sortBy === "drink")}
+            onClick={() => { haptic("light"); setSortBy("drink"); }}
+          >
+            Drink Window
+          </button>
+        </div>
+      </div>
+
+      {/* Winery filter row */}
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ margin: "0 0 6px", fontSize: 11, opacity: 0.5, textTransform: "uppercase", letterSpacing: 1 }}>
+          Filter by winery
+        </p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            style={filterBtnStyle(!wineryFilter)}
+            onClick={() => {
+              haptic("light");
+              setWineryFilter(null);
+              setShowWineryPicker(false);
+            }}
+          >
+            All Wineries
+          </button>
+          {uniqueWineries.map((winery) => (
+            <button
+              key={winery}
+              style={filterBtnStyle(wineryFilter === winery)}
+              onClick={() => {
+                haptic("light");
+                setWineryFilter(wineryFilter === winery ? null : winery);
+              }}
+            >
+              {winery}
+            </button>
+          ))}
+        </div>
+        {wineryFilter && (
+          <p style={{ margin: "8px 0 0", fontSize: 12, opacity: 0.7 }}>
+            Showing {sortedCellar.length} wine{sortedCellar.length !== 1 ? "s" : ""} from <strong>{wineryFilter}</strong>
+            {" \u00B7 "}
+            <span
+              style={{ color: "#c4b5fd", cursor: "pointer", textDecoration: "underline" }}
+              onClick={() => { haptic("light"); setWineryFilter(null); }}
+            >
+              Clear filter
+            </span>
+          </p>
+        )}
       </div>
 
       {/* History button */}
@@ -656,8 +715,8 @@ export default function CellarView({ onBack }: CellarViewProps) {
       {!loading && sortedCellar.length === 0 && (
         <div style={s.card}>
           <p style={{ margin: 0, opacity: 0.7, textAlign: "center" }}>
-            {searchQuery
-              ? "No wines match your search."
+            {searchQuery || wineryFilter
+              ? "No wines match your search or filter."
               : "Your cellar is empty. Scan a bottle or type a wine name to add your first bottle!"}
           </p>
         </div>

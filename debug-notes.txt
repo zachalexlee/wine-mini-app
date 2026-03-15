@@ -1,0 +1,39 @@
+Database findings:
+- 7 wines total, 6 active, 1 consumed
+- Only 1 wine has winery set: "Rickety Bridge" (winery = "Rickety Bridge")
+- All other wines have winery = null
+- Most wines have vintage = null (only DeLille has vintage 2023)
+- All wines have drink_from and drink_to set EXCEPT Rickety Bridge (both null)
+
+Root cause of search issue:
+The Supabase .or() filter with ilike and null values:
+  .or(`wine.ilike.%q%,winery.ilike.%q%,region.ilike.%q%,grape.ilike.%q%`)
+When winery is null, the ilike comparison should return false/null, not match.
+But the real issue might be that the search is not actually filtering - need to check
+if the search endpoint is being called correctly.
+
+The frontend fetchCellar uses useCallback with [searchQuery] dependency.
+When searchQuery changes, fetchCellar is recreated, and useEffect runs it.
+But the search only triggers on Enter key press OR when searchQuery changes
+(which triggers useEffect via fetchCellar dependency).
+
+Wait - actually the useEffect DOES run whenever fetchCellar changes (which is
+whenever searchQuery changes). So typing anything should trigger a search.
+But if searchQuery is empty after clearing, it fetches ALL wines.
+
+Let me check: the sort buttons (Winery, Vintage, Drink Window) are CLIENT-SIDE
+sorts on the already-fetched data. They don't trigger a new search.
+
+So the user's complaint about "winery filter" might be about the SORT button,
+not the search. When they click "Winery" sort, it sorts by winery field.
+Since only 1 wine has a winery value, the sort would put all null-winery wines
+together and Rickety Bridge separately - but it would still SHOW all wines.
+
+The user might expect the "Winery" button to FILTER (show only wines with a winery),
+not just SORT. That's a UX misunderstanding OR the user wants it to work differently.
+
+For vintage sort: most wines have null vintage, so sorting by vintage would
+put them all at 0 effectively. Only DeLille has vintage 2023.
+
+For drink window sort: Rickety Bridge has null drink_from/drink_to, so its
+drinkWindow.from would be null/undefined, falling back to 0.
