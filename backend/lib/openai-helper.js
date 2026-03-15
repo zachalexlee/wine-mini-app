@@ -87,7 +87,7 @@ async function lookupWine(wineName, vintage) {
       { role: "system", content: WINE_SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Please provide details and an estimated drinking window for this wine:\n\n${userMessage}`,
+        content: `The user has typed the following. It could be a specific wine name, a winery/producer name, a grape variety, or a region. If it appears to be just a winery or producer name (e.g. "Rickety Bridge", "Opus One", "Château Margaux"), return details for their most iconic or flagship wine. Always do your best to identify and return a result.\n\n${userMessage}`,
       },
     ],
     max_tokens: 500,

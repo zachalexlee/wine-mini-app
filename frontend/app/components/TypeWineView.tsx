@@ -93,12 +93,12 @@ export default function TypeWineView({ onBack }: TypeWineViewProps) {
 
       <div style={s.card}>
         <p style={{ margin: "0 0 12px", opacity: 0.7, fontSize: 14 }}>
-          Enter a wine name and optional vintage to look up its details and
-          drinking window.
+          Enter a wine name, winery, or producer and an optional vintage to look
+          up details and drinking window.
         </p>
         <input
           style={s.input}
-          placeholder="Wine name (e.g. Opus One)"
+          placeholder="Wine or winery (e.g. Opus One, Rickety Bridge)"
           value={wineName}
           onChange={(e) => setWineName(e.target.value)}
         />
